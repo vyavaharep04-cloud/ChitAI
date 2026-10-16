@@ -3,7 +3,7 @@
 **Research title:** *ChitAI: An AI-Powered Multiplayer Game for Decision-Making Under Incomplete Information*  
 **Repository:** `vyavaharep04-cloud/ChitAI`  
 **Default branch:** `main`  
-**Status:** Planning / repository setup  
+**Status:** Implementation kickoff — game rules formalized  
 **Last updated:** 2026-10-16
 
 > Maintenance rule: Treat this as a persistent project record. Do not overwrite existing history. Append dated milestone notes to the Change Log, including decisions, changes, tests, and next actions.
@@ -31,7 +31,7 @@ All agents must use the same interface and receive only player-appropriate obser
 - For `N` players, there are `N` unique chit names, each occurring exactly four times.
 - Total chits: `4N`; each player starts with four.
 - Shuffle and deal randomly at the start of every round.
-- An initial four-of-a-kind hand is possible; its claim window needs explicit definition.
+- During the initial deal, every player receives an initial claim opportunity as soon as their four chits have been revealed to them. A valid claim requires all four to match.
 
 ### Passing
 - Pass clockwise; the starting player rotates each round.
@@ -47,17 +47,19 @@ All agents must use the same interface and receive only player-appropriate obser
 - A false claim ends the round: claimant gets `−(N−1)` points; everyone else gets `0`.
 - After a valid win, every other player reacts; the winner does not react.
 - Winner scores `N`; other players score `N−1`, `N−2`, …, `1` according to reaction order.
+- Do not apply a general timeout while multiple non-winners still need to react. When only one non-winner remains to react (for example, in a four-player game after the other three players have reacted/claimed), resolve that remaining reaction automatically by timeout.
+- Record reaction timestamps at microsecond precision. If events share a timestamp, use the authoritative server's receipt/sequence order as the deterministic tie-breaker; timestamps alone must not determine fairness.
 - Server-side logic must validate claims, actions, ordering, and scores; do not trust the client UI.
 
 ### Rounds, timeout, and anti-stall
 - Room creator chooses the round count.
 - Round count must be a multiple of `N` and include at least one complete starting-player rotation.
 - Reshuffle and redeal all chits every round.
-- Pass timeout is at most 15 seconds; room creator may choose a shorter timeout.
-- Automatic action on timeout is **not yet decided**.
-- If the same player passes the same chit name for 10 consecutive passes, force a reshuffle.
-- Passing another chit name resets the consecutive count for the prior name and begins/continues tracking for the new name as appropriate.
-- The exact transition after a forced reshuffle remains unresolved.
+- Pass timeout is at most 15 seconds; the room creator may choose a shorter duration.
+- If a player runs out of time to pass, randomly select and pass one of the five chits. Simulations must use a seeded RNG for reproducibility.
+- On subsequent turns, the initiator's claim option is available while they hold four chits, whether or not those four match. A non-initiator's claim option becomes available when they receive a fifth chit. Claim validity is still checked against the matching rule.
+- If the same player passes the same chit name for 10 consecutive passes, force a reshuffle and restart the round as a draw. The same player remains the initiator; no score is added or removed for that drawn round.
+- Passing a different chit name resets the consecutive-pass count for the previously tracked name and starts tracking the newly passed name.
 
 ## 4. Hidden information and fairness
 
@@ -148,34 +150,40 @@ Stretch features: public chat, disconnect recovery/reconnection, more agent pers
 
 ## 8. Delivery priorities
 
-1. Resolve remaining rule ambiguities.
-2. Implement pure engine and unit tests.
+1. Inspect the repository and align this context document with the agreed rules.
+2. Implement the pure game engine and unit tests.
 3. Implement restricted player observations and privacy tests.
 4. Implement RuleBot and seeded AI-only simulation.
-5. Add SmartBot and MindBot as time permits.
+5. Implement SmartBot and compare it with RuleBot; consider MindBot after the core prototype is stable.
 6. Produce reproducible logs and metric summaries.
 7. Add a basic browser UI using the same engine.
-8. Test mixed rooms and local-network access.
-9. Write the report from actual implementation and results.
+8. Test mixed rooms and local-network access if time permits.
+9. Write the report using actual implementation and experimental results.
 
 Avoid starting with a complex UI or adding advanced algorithms before the rules and baseline experiment work reliably.
 
-## 9. Open decisions — do not silently invent rules
+## 9. Agreed implementation rules and remaining engineering details
 
-1. **Timeout policy:** Which legal action is automatic when a player times out? Deterministic or random? How is randomness seeded?
-2. **Forced reshuffle:** Does it restart the round? Who starts next, and what happens to scores/state?
-3. **Simultaneous claims:** Server receipt order is the current rule; define and test exact event-loop ordering.
-4. **Claim timing with five chits:** Can a player claim instead of passing, and exactly when is the five-chit condition evaluated?
-5. **Reaction timeout:** Is there a timeout and what automatic response applies?
-6. **Custom chit names:** Fixed names or configurable? If configurable, define uniqueness and validation.
-7. **Round count:** Confirm minimum `N` and valid positive multiples of `N`.
-8. **Starting-player rotation:** Confirm one-seat rotation each round, including after false claims or forced reshuffles.
-9. **Consecutive-pass tracking:** Define counters and reset behaviour precisely.
-10. **Observation history:** Specify public/private information and what each player remembers.
-11. **Initial four-of-a-kind:** Define the initial claim window and consequences of not claiming.
-12. **Reaction scoring:** Define how reaction order, ties, and late responses are resolved.
+The following gameplay choices have been supplied or confirmed by the project owner and must not be reopened casually:
 
-Resolve each item explicitly and add tests for it.
+- **Initial deal claim window:** Every player receives an initial claim opportunity as soon as their four initial chits have been revealed to them. A valid initial claim requires four identical chits.
+- **Initiator claim availability:** On subsequent turns, the initiator's claim option is available while they hold four chits, whether or not they match. A non-initiator gets the claim option when holding the temporary five-chit hand after receiving a chit. Claim validity is always checked against the matching rule.
+- **Pass timeout:** Randomly pass one of the five chits when the player runs out of time. Use seeded randomness for reproducible simulations.
+- **Anti-stall:** Ten consecutive passes of the same chit name by the same player cause the round to restart as a draw. The same initiator starts again, and no score changes for the drawn round.
+- **Reaction timeout:** Do not apply a general timeout while multiple non-winners still need to react. When only one non-winner remains to react, resolve that remaining reaction automatically by timeout.
+- **Reaction ordering:** Record reaction timestamps to microsecond precision. Use authoritative server receipt/sequence order as the deterministic tie-breaker if timestamps are equal; timestamps alone are not sufficient.
+- **Round count:** For N players, the room creator chooses a positive number of rounds that is a multiple of N (N, 2N, 3N, ...), ensuring full starting-player rotations.
+- **Starting player:** Rotate the initiator by one seat between rounds. An anti-stall draw restarts with the same initiator.
+- **Claims:** The first valid claim accepted by the authoritative server wins. False claims end the round with the documented penalty.
+
+### Engineering details to implement and test
+
+1. Validate whether chit names are fixed or configurable; do not invent a user-facing customization feature unless needed.
+2. Specify the exact public event history available to agents. Private information may only be retained by an agent if that agent legitimately observed it.
+3. Implement claim/reaction event ordering using a single authoritative server sequence and record timestamps at microsecond precision where supported.
+4. Ensure a timeout-selected chit is chosen from the player's legal five-chit options and uses the seeded RNG in simulation.
+5. Add tests for anti-stall round restart, same initiator, unchanged score, and counter resets.
+6. If any historical detail conflicts with this summary, flag it for the owner instead of silently changing the rules.
 
 ## 10. Definition of done
 
@@ -211,5 +219,11 @@ For each substantial change:
 - Confirmed public repository `vyavaharep04-cloud/ChitAI`, default branch `main`.
 - Repository was at initial setup with a minimal README when last inspected; inspect the live repository before assuming implementation files exist.
 - An earlier GitHub integration write attempt returned `403 Resource not accessible by integration`; after the user updated access, branch creation succeeded.
-- Created feature branch `docs/add-project-context` from `main` to hold this context document. No pull request has been opened yet.
-- Next: add this file to the feature branch, inspect the diff, then open a PR targeting `main`; resolve open rule decisions before engine implementation.
+- Created feature branch `docs/add-project-context`, added this document, opened PR #1, and the owner merged it into `main`.
+- Owner clarified additional rules: initial claim window for everyone after their initial four chits are revealed; random chit pass on timeout; initiator claim option while holding four regardless of match; non-initiator claim option on receiving a fifth chit; anti-stall restarts the round as a draw with the same initiator and unchanged score; reaction timeout only when one non-winner remains; microsecond reaction timestamps with deterministic server-order tie-breaking; round counts N, 2N, 3N, etc.
+- Next: inspect the repository in VS Code, implement engine and tests before UI, and keep this context synchronized with actual code.
+
+### 2026-10-16 — Rules clarified before implementation
+- Recorded the project owner's explicit decisions for initial claims, initiator/non-initiator claim availability, random pass timeout, anti-stall draw restart, reaction timeout, microsecond reaction timestamps with server-order tie-breaking, and round-count multiples of player count.
+- Updated delivery priorities to start implementation rather than reopen already-decided gameplay questions.
+- No application code or tests were changed or run as part of this documentation update.
