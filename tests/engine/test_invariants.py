@@ -92,6 +92,7 @@ def test_win_declared_requires_matching_hand(state):
         decision_kind=None,
         initial_claims_resolved=2,
         winner=1,  # seat 1 does not hold a matching hand
+        claim_decision_kind=DecisionKind.INITIAL_CLAIM,
     )
     with pytest.raises(InvariantViolation):
         check_invariants(bad)
@@ -105,6 +106,7 @@ def test_false_claim_requires_non_matching_hand(state):
         decision_kind=None,
         initial_claims_resolved=1,
         false_claimant=0,  # seat 0 actually matches
+        claim_decision_kind=DecisionKind.INITIAL_CLAIM,
     )
     with pytest.raises(InvariantViolation):
         check_invariants(bad)

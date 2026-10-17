@@ -104,13 +104,19 @@ def test_all_decline_moves_to_passing_with_initiator_first_pass(n):
 def test_initiator_has_no_further_initial_opportunity_after_resolution():
     state = start(make_config(4))
     state, _ = decline_all_but(state, apply_action, 4)
+    # M3: passing now exists, so the phase accepts actions, but the initiator
+    # still has no claim opportunity at the first pass (§3A.3) and no decline exists.
+    expected = {
+        ClaimAction: RejectionReason.NO_CLAIM_OPPORTUNITY,
+        DeclineAction: RejectionReason.ACTION_NOT_AVAILABLE,
+    }
     for action in (ClaimAction(state.initiator), DeclineAction(state.initiator)):
         before = state
         result = apply_action(state, action)
         assert isinstance(result, Rejected)
-        assert result.reason is RejectionReason.PHASE_NOT_ACCEPTING
+        assert result.reason is expected[type(action)]
         assert state == before
-    assert legal_actions(state) == ()
+    assert not any(isinstance(a, (ClaimAction, DeclineAction)) for a in legal_actions(state))
 
 
 # --- claims ----------------------------------------------------------------
