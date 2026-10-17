@@ -2,9 +2,10 @@
 M2: state, actions, events, invariants, and the initial claim phase.
 M3: sequential passing and ordinary claim opportunities.
 M4: false-claim penalties, round completion, and multi-round progression.
-M5: valid-win reactions, scoring, and round completion."""
+M5: valid-win reactions, scoring, and round completion.
+M6: host-issued timeouts and anti-stall draws."""
 
-from .actions import Action, ClaimAction, DeclineAction, PassAction, ReactAction
+from .actions import Action, ClaimAction, DeclineAction, PassAction, ReactAction, TimeoutAction
 from .chits import CHIT_NAMES, CHITS_PER_HAND, COPIES_PER_NAME, Chit, build_deck, chit_names_for
 from .config import (
     MAX_PASS_TIMEOUT_SECONDS,
@@ -14,13 +15,25 @@ from .config import (
     GameConfig,
 )
 from .deal import FIRST_ATTEMPT, Deal, deal_round, initiator_for_round, rotation_initiator
-from .engine import Accepted, RejectionReason, Rejected, apply_action, new_game, start_from_deal
+from .engine import (
+    Accepted,
+    RejectionReason,
+    Rejected,
+    apply_action,
+    new_game,
+    start_from_deal,
+    timeout_chit,
+)
 from .events import (
+    DRAW_REASON_REPEATED_PASS,
+    TIMEOUT_KIND_FINAL_REACTION,
+    AttemptDrawn,
     ChitPassed,
     ClaimMade,
     ROUND_OUTCOME_FALSE_CLAIM,
     ROUND_OUTCOME_VALID_WIN,
     DealEvent,
+    DecisionTimedOut,
     Event,
     FalseClaimPenalized,
     GameCompleted,
@@ -32,8 +45,9 @@ from .events import (
     ValidWinScored,
 )
 from .invariants import InvariantViolation, check_invariants
-from .rng import derive_seed, make_rng
+from .rng import DEAL, TIMEOUT, derive_seed, make_rng
 from .rules import (
+    CONSECUTIVE_PASS_LIMIT,
     has_claim_opportunity,
     initial_claim_order,
     is_valid_claim,
@@ -43,6 +57,8 @@ from .rules import (
     legal_actions,
     next_seat,
     pending_reactors,
+    timeout_action,
+    update_pass_streaks,
 )
 from .scoring import (
     false_claim_penalty,
@@ -60,6 +76,7 @@ __all__ = [
     "DeclineAction",
     "PassAction",
     "ReactAction",
+    "TimeoutAction",
     "CHIT_NAMES",
     "CHITS_PER_HAND",
     "COPIES_PER_NAME",
@@ -76,12 +93,15 @@ __all__ = [
     "deal_round",
     "initiator_for_round",
     "rotation_initiator",
+    "DEAL",
+    "TIMEOUT",
     "derive_seed",
     "make_rng",
     "Accepted",
     "Rejected",
     "RejectionReason",
     "apply_action",
+    "timeout_chit",
     "new_game",
     "start_from_deal",
     "ChitPassed",
@@ -89,6 +109,10 @@ __all__ = [
     "ROUND_OUTCOME_FALSE_CLAIM",
     "ROUND_OUTCOME_VALID_WIN",
     "PlayerReacted",
+    "AttemptDrawn",
+    "DecisionTimedOut",
+    "DRAW_REASON_REPEATED_PASS",
+    "TIMEOUT_KIND_FINAL_REACTION",
     "ValidWinScored",
     "DealEvent",
     "Event",
@@ -102,6 +126,9 @@ __all__ = [
     "valid_win_score_changes",
     "winner_score",
     "pending_reactors",
+    "timeout_action",
+    "update_pass_streaks",
+    "CONSECUTIVE_PASS_LIMIT",
     "InitialClaimDeclined",
     "InitialClaimMade",
     "InitialClaimsResolved",

@@ -1,5 +1,5 @@
 """Engine invariants (§5A, constraint 8). M2: initial phase. M3: passing. M4: scores,
-round completion and the terminal state. M5: reaction phase and win scores.
+round completion and the terminal state. M5: reaction phase and win scores. M6: anti-stall streaks.
 
 `check_invariants` is called by the engine on every state it produces. A
 violation means an engine bug (or a malformed deal handed to the engine) and
@@ -19,7 +19,7 @@ from collections import Counter
 
 from .chits import CHITS_PER_HAND, COPIES_PER_NAME, Chit, build_deck, chit_names_for
 from .deal import FIRST_ATTEMPT, initiator_for_round, rotation_initiator
-from .rules import initial_claim_order, is_valid_claim
+from .rules import CONSECUTIVE_PASS_LIMIT, initial_claim_order, is_valid_claim
 from .scoring import false_claim_penalty, valid_win_round_total, winner_score
 from .state import CLAIM_KINDS, DecisionKind, GameState, Phase
 
@@ -70,6 +70,7 @@ def check_invariants(state: GameState) -> None:
         f"scores must be a tuple of {n} integers: {state.scores!r}",
     )
     _check_scores(state)
+    _check_pass_streaks(state)
 
     # --- hands: sizes, 4N total, four copies per name, no duplicates -----
     _require(
@@ -243,6 +244,35 @@ def _check_scores(state: GameState) -> None:
         f"total score {total} is not reachable with {rounds} completed rounds "
         f"(valid win = +{win_total}, false claim = -{penalty})",
     )
+
+
+def _check_pass_streaks(state: GameState) -> None:
+    """M6: `pass_streaks` is a tuple of `(seat, chit_name, count)` sorted by
+    strictly increasing seat, with a chit name in play and a count from 1 to
+    `CONSECUTIVE_PASS_LIMIT - 1` (the limit itself is a draw and never rests in
+    state). No pass has happened yet while initial claims are open, and a
+    finished game has cleared its streaks, so both must be empty."""
+    n = state.config.num_players
+    streaks = state.pass_streaks
+    _require(isinstance(streaks, tuple), f"pass_streaks must be a tuple, got {streaks!r}")
+    names = set(chit_names_for(n))
+    previous = -1
+    for entry in streaks:
+        _require(
+            isinstance(entry, tuple) and len(entry) == 3,
+            f"a pass streak must be (seat, chit_name, count): {entry!r}",
+        )
+        seat, name, count = entry
+        _require(_is_int(seat) and 0 <= seat < n, f"bad streak seat {seat!r}")
+        _require(seat > previous, f"pass_streaks must be sorted with one entry per seat: {streaks!r}")
+        previous = seat
+        _require(name in names, f"streak chit name {name!r} is not in play")
+        _require(
+            _is_int(count) and 1 <= count < CONSECUTIVE_PASS_LIMIT,
+            f"streak count {count!r} must be in [1, {CONSECUTIVE_PASS_LIMIT - 1}]",
+        )
+    if state.phase in (Phase.INITIAL_CLAIMS, Phase.GAME_OVER):
+        _require(streaks == (), f"no pass streaks expected in {state.phase.value}: {streaks!r}")
 
 
 def _check_final_hand_shape(state: GameState) -> None:

@@ -1,6 +1,6 @@
 """Authoritative game state (§3A.1, §5A). M2: initial claim phase. M3: passing.
 M4: false-claim round completion, multi-round progression, terminal state.
-M5: valid-win reactions and scoring.
+M5: valid-win reactions and scoring. M6: anti-stall streaks (`pass_streaks`).
 
 `GameState` is immutable. The engine produces a new state for every accepted
 action and leaves the old one untouched, so a rejected action cannot change
@@ -106,6 +106,12 @@ class GameState:
     reaction_order: seats that have reacted to the win, in accepted-action
         order (M5). Non-empty only in WIN_DECLARED; never contains the winner
         or a repeated seat.
+    pass_streaks: anti-stall tracking (M6, §3A.6). Sparse, sorted by seat:
+        `(seat, chit_name, count)` means that seat's most recent `count`
+        passes (1..9) all used `chit_name`. Seats that have not passed in this
+        attempt have no entry. Names, not physical copies, are tracked. A
+        tenth consecutive pass never rests in state: it ends the attempt as a
+        draw. Reset (empty) by every new deal and at `GAME_OVER`.
     """
 
     config: GameConfig
@@ -123,3 +129,4 @@ class GameState:
     next_seq: int
     claim_decision_kind: DecisionKind | None = None
     reaction_order: tuple[int, ...] = ()
+    pass_streaks: tuple[tuple[int, str, int], ...] = ()

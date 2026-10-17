@@ -1,7 +1,7 @@
 """Sequenced engine events with separate public and debug views (§5A, §4, §6, §3A.8).
 M4 adds FalseClaimPenalized, RoundCompleted and GameCompleted; the next round's
 start is an ordinary DealEvent. M5 adds PlayerReacted and ValidWinScored and a
-"valid_win" RoundCompleted outcome.
+"valid_win" RoundCompleted outcome. M6 adds DecisionTimedOut and AttemptDrawn.
 
 Every event carries a `seq` from the single authoritative sequence, plus the
 completed-round index and attempt number (§6).
@@ -249,6 +249,64 @@ class RoundCompleted(Event):
             "claimant": self.claimant,
             "rounds_completed": self.rounds_completed,
         }
+
+
+TIMEOUT_KIND_FINAL_REACTION = "final_reaction"
+DRAW_REASON_REPEATED_PASS = "repeated_pass"
+
+
+@dataclass(frozen=True)
+class DecisionTimedOut(Event):
+    """The host reported that a decision timer expired and the engine accepted
+    it (M6, §3A.7). It is emitted *before* the ordinary events of the
+    transition it resolves (an automatic decline, a forced pass or a final
+    reaction), so those events keep their normal shape and meaning.
+
+    seat: the player who timed out. decision_kind: the `DecisionKind` value of
+    the decision point, or "final_reaction" for the last non-winner's
+    reaction. Public: the marker carries no chit. A forced pass's chit appears,
+    as for any pass, only in the private `ChitPassed` debug view.
+    """
+
+    seat: int
+    decision_kind: str
+
+    type: ClassVar[str] = "decision_timed_out"
+
+    def public_view(self) -> dict[str, Any]:
+        return {**self._base(), "seat": self.seat, "decision_kind": self.decision_kind}
+
+
+@dataclass(frozen=True)
+class AttemptDrawn(Event):
+    """The attempt ended as an anti-stall draw (M6, §3A.6): `seat` made its
+    `consecutive_passes`-th consecutive pass of one chit name. The chit was not
+    delivered. `completed_round` and `attempt` are those of the attempt that
+    ended; the redeal follows as a `DealEvent` carrying the next attempt. No
+    score changes and no round is completed.
+
+    Public: who stalled and how many passes, but not the chit name, which only
+    the passer (and, normally, the receiver) may know (§3A.8). The private
+    debug view adds the chit.
+    """
+
+    seat: int
+    consecutive_passes: int
+    chit: Chit
+    reason: str = DRAW_REASON_REPEATED_PASS
+
+    type: ClassVar[str] = "attempt_drawn"
+
+    def public_view(self) -> dict[str, Any]:
+        return {
+            **self._base(),
+            "seat": self.seat,
+            "reason": self.reason,
+            "consecutive_passes": self.consecutive_passes,
+        }
+
+    def debug_view(self) -> dict[str, Any]:
+        return {**self.public_view(), "chit": _chit_json(self.chit)}
 
 
 @dataclass(frozen=True)

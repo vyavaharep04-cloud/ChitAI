@@ -1,4 +1,5 @@
 """Player actions (§5A). M2: initial-phase claim and decline. M3: passing. M5: reactions.
+M6: host-issued timeouts.
 
 Actions are plain data. They are *requests*; only the authoritative engine
 decides whether they are legal and what they do. Engine-generated timeout
@@ -58,4 +59,24 @@ class ReactAction:
     seat: int
 
 
-Action = ClaimAction | DeclineAction | PassAction | ReactAction
+@dataclass(frozen=True)
+class TimeoutAction:
+    """The host reports that `seat`'s decision timer expired (M6, §3A.7).
+
+    The engine has no clock, so it cannot check that time has really elapsed;
+    the host (server or simulator) issues this action when its own timer runs
+    out, and the engine validates only that a timeout is *available* for that
+    seat. An accepted timeout resolves through the ordinary transition for the
+    decision point and never claims on the player's behalf:
+
+    * initial claim phase: an automatic decline (§3A.3);
+    * ordinary passing: a forced pass of one legal physical chit, chosen
+      uniformly with the seeded timeout stream (§3A.7);
+    * reaction phase: the one remaining non-winner's reaction, and only when
+      exactly one non-winner remains (§3A.5).
+    """
+
+    seat: int
+
+
+Action = ClaimAction | DeclineAction | PassAction | ReactAction | TimeoutAction
