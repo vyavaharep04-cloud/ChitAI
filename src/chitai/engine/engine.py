@@ -1,13 +1,17 @@
 """The single authoritative engine (§5A). M2: initial claim phase. M3: sequential passing.
 M4: false-claim round completion and multi-round progression. M5: valid-win
-reactions, scoring and round completion.
+reactions, scoring and round completion. M6: host-issued timeouts and
+anti-stall draws.
 
 `apply_action` validates every request itself; the caller (UI, agent,
 simulator) is never trusted. A rejected action returns `Rejected` and the
 previous state is untouched. Accepted actions return the new state and the
-sequenced events. No random choices occur through M5: next-round deals are a
-pure function of (master seed, completed-round index, attempt), so nothing
-stateful is consumed (timeouts are M6).
+sequenced events. Randomness is never stateful: deals are a pure function of
+(master seed, completed-round index, attempt) and a forced pass is a pure
+function of (master seed, round, attempt, next sequence number) on a separate
+"timeout" stream, so a rejected action consumes nothing and a timeout cannot
+change any later deal. There is no clock: a timeout is an action the host
+issues when its own timer expires (`TimeoutAction`).
 """
 
 from __future__ import annotations
@@ -15,16 +19,19 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from enum import Enum
 
-from .actions import Action, ClaimAction, DeclineAction, PassAction, ReactAction
+from .actions import Action, ClaimAction, DeclineAction, PassAction, ReactAction, TimeoutAction
 from .chits import Chit
 from .config import GameConfig
 from .deal import FIRST_ATTEMPT, Deal, deal_round, rotation_initiator
 from .events import (
+    TIMEOUT_KIND_FINAL_REACTION,
+    AttemptDrawn,
     ChitPassed,
     ClaimMade,
     ROUND_OUTCOME_FALSE_CLAIM,
     ROUND_OUTCOME_VALID_WIN,
     DealEvent,
+    DecisionTimedOut,
     Event,
     FalseClaimPenalized,
     GameCompleted,
@@ -35,13 +42,17 @@ from .events import (
     RoundCompleted,
     ValidWinScored,
 )
-from .invariants import check_invariants
+from .invariants import InvariantViolation, check_invariants
+from .rng import TIMEOUT, make_rng
 from .rules import (
+    CONSECUTIVE_PASS_LIMIT,
     initial_claim_order,
     is_valid_claim,
     is_valid_initial_claim,
     is_valid_seat,
     next_seat,
+    pending_reactors,
+    update_pass_streaks,
 )
 from .scoring import false_claim_penalty, false_claim_score_changes, valid_win_score_changes
 from .state import CLAIM_KINDS, DecisionKind, GameState, Phase
@@ -57,6 +68,7 @@ class RejectionReason(Enum):
     CHIT_NOT_HELD = "chit_not_held"  # pass of a chit the seat does not hold
     WINNER_CANNOT_REACT = "winner_cannot_react"  # M5: the winner never reacts to its own win
     ALREADY_REACTED = "already_reacted"  # M5: each non-winner reacts at most once
+    TIMEOUT_NOT_AVAILABLE = "timeout_not_available"  # M6: no timeout exists here (e.g. several reactors pending)
 
 
 @dataclass(frozen=True)
@@ -132,12 +144,14 @@ def apply_action(state: GameState, action: object) -> Accepted | Rejected:
     if not isinstance(state, GameState):
         raise TypeError(f"state must be a GameState, got {type(state).__name__}")
 
-    if not isinstance(action, (ClaimAction, DeclineAction, PassAction, ReactAction)):
+    if not isinstance(action, (ClaimAction, DeclineAction, PassAction, ReactAction, TimeoutAction)):
         return Rejected(RejectionReason.UNKNOWN_ACTION, f"unrecognized action {action!r}")
     if not is_valid_seat(state.config, action.seat):
         return Rejected(RejectionReason.INVALID_SEAT, f"invalid seat {action.seat!r}")
     if isinstance(action, ReactAction):
         return _apply_react(state, action.seat)
+    if isinstance(action, TimeoutAction):
+        return _apply_timeout(state, action.seat)
     if state.phase not in (Phase.INITIAL_CLAIMS, Phase.PASSING):
         if state.phase is Phase.GAME_OVER:
             what = "the game is over"
@@ -192,6 +206,9 @@ def _apply_pass(state: GameState, seat: int, chit: Chit) -> Accepted:
     seat's hand in one step (§3A.4). If the receiver is the initiator the chit
     has returned and the initiator holds four again."""
     n = state.config.num_players
+    streaks, count = update_pass_streaks(state.pass_streaks, seat, chit.name)
+    if count >= CONSECUTIVE_PASS_LIMIT:
+        return _draw_attempt(state, seat, chit, count)  # the tenth chit is not delivered
     receiver = next_seat(n, seat)
     hands = list(state.hands)
     hands[seat] = tuple(c for c in state.hands[seat] if c != chit)
@@ -214,10 +231,105 @@ def _apply_pass(state: GameState, seat: int, chit: Chit) -> Accepted:
         hands=tuple(hands),
         decision_seat=receiver,
         decision_kind=kind,
+        pass_streaks=streaks,
         next_seq=state.next_seq + 1,
     )
     check_invariants(new_state)
     return Accepted(new_state, (event,))
+
+
+def _draw_attempt(state: GameState, seat: int, chit: Chit, consecutive: int) -> Accepted:
+    """End the attempt as an anti-stall draw (§3A.6) and redeal.
+
+    `chit` is the tenth consecutive same-name pass by `seat`; it is *not*
+    delivered, so no receiver ever gets a claim opportunity from it. No score
+    changes and `completed_rounds` is untouched. The new attempt is the seeded
+    deal for (same completed round, attempt + 1): same initiator by
+    construction, fresh hands, anti-stall streaks cleared (a new `GameState`
+    starts with none), event sequence continuing.
+    """
+    drawn = AttemptDrawn(
+        seq=state.next_seq,
+        completed_round=state.completed_rounds,
+        attempt=state.attempt,
+        seat=seat,
+        consecutive_passes=consecutive,
+        chit=chit,
+    )
+    deal = deal_round(state.config, state.completed_rounds, state.attempt + 1)
+    new_state, deal_event = _start_round(state.config, deal, state.scores, state.next_seq + 1)
+    return Accepted(new_state, (drawn, deal_event))
+
+
+def timeout_chit(state: GameState) -> Chit:
+    """The chit a forced pass would choose right now (M6, §3A.7).
+
+    Uniform over the decision seat's physical chit instances (four for the
+    initiator, five for a receiver), drawn from the dedicated "timeout" stream
+    seeded by (master seed, completed round, attempt, next sequence number).
+    The hand is sorted first, so the choice depends on the set of chits held,
+    not on the order in which they arrived. Stateless: calling it repeatedly
+    returns the same chit and consumes nothing.
+    """
+    if state.phase is not Phase.PASSING or state.decision_seat is None:
+        raise ValueError("a forced pass exists only at a passing decision point")
+    rng = make_rng(state.config.seed, TIMEOUT, state.completed_rounds, state.attempt, state.next_seq)
+    return rng.choice(sorted(state.hands[state.decision_seat]))
+
+
+def _apply_timeout(state: GameState, seat: int) -> Accepted | Rejected:
+    """Resolve an expired decision timer through the ordinary transition (M6).
+
+    The timeout is validated like the action it stands for: only the single
+    decision point may time out, and in the reaction phase only the last
+    remaining non-winner. A `DecisionTimedOut` marker takes the next sequence
+    number and the ordinary events follow, so a timeout cannot bypass claim,
+    pass, reaction, scoring or anti-stall logic and never produces a claim.
+    """
+    if state.phase is Phase.GAME_OVER:
+        return Rejected(RejectionReason.PHASE_NOT_ACCEPTING, "no action is accepted: the game is over")
+    if state.phase is Phase.WIN_DECLARED:
+        pending = pending_reactors(state)
+        if len(pending) != 1:
+            return Rejected(
+                RejectionReason.TIMEOUT_NOT_AVAILABLE,
+                f"no reaction timeout applies while {len(pending)} non-winners still need to react",
+            )
+        if seat != pending[0]:
+            if seat == state.winner:
+                return Rejected(RejectionReason.WINNER_CANNOT_REACT, f"seat {seat} won the round and does not react")
+            return Rejected(RejectionReason.ALREADY_REACTED, f"seat {seat} has already reacted")
+        kind = TIMEOUT_KIND_FINAL_REACTION
+    elif state.phase in (Phase.INITIAL_CLAIMS, Phase.PASSING):
+        if seat != state.decision_seat:
+            return Rejected(
+                RejectionReason.NOT_DECISION_POINT,
+                f"seat {seat} has no decision to time out now (waiting for seat {state.decision_seat})",
+            )
+        kind = state.decision_kind.value
+    else:
+        return Rejected(RejectionReason.PHASE_NOT_ACCEPTING, f"no action is accepted: phase {state.phase.value}")
+
+    # Everything above only validated; choose the forced chit before the
+    # sequence number moves, so the choice is a function of the state the host saw.
+    chit = timeout_chit(state) if state.phase is Phase.PASSING else None
+    marker = DecisionTimedOut(
+        seq=state.next_seq,
+        completed_round=state.completed_rounds,
+        attempt=state.attempt,
+        seat=seat,
+        decision_kind=kind,
+    )
+    shifted = replace(state, next_seq=state.next_seq + 1)
+    if state.phase is Phase.WIN_DECLARED:
+        result = _apply_react(shifted, seat)
+    elif state.phase is Phase.INITIAL_CLAIMS:
+        result = _apply_initial_decline(shifted, seat)
+    else:
+        result = _apply_pass(shifted, seat, chit)
+    if not isinstance(result, Accepted):  # pre-validated above, so this is an engine bug
+        raise InvariantViolation(f"a validated timeout was rejected: {result!r}")
+    return Accepted(result.state, (marker,) + result.events)
 
 
 def _apply_ordinary_claim(state: GameState, seat: int) -> Accepted:
@@ -418,6 +530,7 @@ def _close_round(
             false_claimant=None,
             claim_decision_kind=None,
             reaction_order=(),
+            pass_streaks=(),
             next_seq=seq + 1,
         )
         check_invariants(new_state)

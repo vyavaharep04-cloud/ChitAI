@@ -13,7 +13,7 @@ This is a hypothesis, not a result. No experiments have been run, and no claim a
 
 ## Project status
 
-The gameplay rules and architecture have been finalized and documented. **Milestones 1 to 4 are implemented and merged into `main`; Milestone 5 is implemented on a feature branch awaiting review.** M1: project scaffolding, `GameConfig` validation, fixed-name deck construction, seeded dealing, and starting-player rotation. M2: game state, actions, events, invariants, and the **initial claim phase** (claim or decline, in deterministic order from the initiator). M3: **sequential passing** and ordinary claim opportunities (a five-chit receiver, and the initiator when the chit returns). M4: **false-claim penalties, round completion, and multi-round progression** (rotating initiator, fresh deals, a terminal state). M5: **valid-win resolution, player reactions, and scoring**. Everything else is not implemented yet: no timeouts, forced passes, anti-stall draws, agents, simulations, server, or browser UI. There is nothing playable yet.
+The gameplay rules and architecture have been finalized and documented. **Milestones 1 to 4 are implemented and merged into `main`; Milestone 5 is implemented on a feature branch awaiting review.** *(Update: Milestones 1 to 5 are merged into `main`; Milestone 6, timeouts and anti-stall draws, is implemented on a feature branch awaiting review.)* M1: project scaffolding, `GameConfig` validation, fixed-name deck construction, seeded dealing, and starting-player rotation. M2: game state, actions, events, invariants, and the **initial claim phase** (claim or decline, in deterministic order from the initiator). M3: **sequential passing** and ordinary claim opportunities (a five-chit receiver, and the initiator when the chit returns). M4: **false-claim penalties, round completion, and multi-round progression** (rotating initiator, fresh deals, a terminal state). M5: **valid-win resolution, player reactions, and scoring**. Everything else is not implemented yet: no timeouts, forced passes, anti-stall draws, agents, simulations, server, or browser UI. There is nothing playable yet.
 
 ## Documentation
 
@@ -150,5 +150,44 @@ print(state.scores, state.completed_rounds, state.initiator)
 ```
 
 **Limits of M5.** No timeouts, forced passes or anti-stall draws (Milestone 6), so callers must still bound their own pass loops. The engine records no wall-clock timestamps; reaction order is the engine's accepted-action order. There is no latency model for simulated reactions, no player observations, agents or UI.
+
+### What exists in Milestone 6
+
+Timeouts and the anti-stall rule (PROJECT_CONTEXT.md §3A.3, §3A.5-§3A.7):
+
+- **The engine has no clock.** A timeout is an action the *host* issues when its own timer expires: `TimeoutAction(seat)`. The engine checks only that a timeout is *available* for that seat; it cannot check elapsed time. There are no sleeps, timers or threads. `GameConfig.pass_timeout_seconds` (greater than 0, at most 15) is the value the host should use for its timers; it never changes engine behaviour.
+- An accepted timeout resolves through the ordinary transition, never a claim: in the **initial claim phase** it is an automatic decline; during **passing** it is a forced pass of one physical chit chosen uniformly from the seat's hand (four for the initiator, five for a receiver) with the seeded `"timeout"` stream; in the **reaction phase** it is only available for the *last* remaining non-winner, and resolves that reaction exactly like `ReactAction` (the last reactor scores 1 either way). While two or more non-winners remain it is rejected with `timeout_not_available`. All other rejections (wrong seat, invalid seat, game over) behave as for the ordinary actions and change nothing.
+- A forced pass depends only on the master seed, the round, the attempt, the next sequence number and the set of chits held, so it is reproducible; a timeout uses its own random stream, so it can never change a later deal.
+- **Anti-stall:** each seat's consecutive passes of one chit *name* are counted in `GameState.pass_streaks` (sparse `(seat, chit_name, count)` entries). Different physical copies of a name continue the streak, a different name restarts that seat's count at one, and other seats' passes never change it. The **tenth** consecutive same-name pass by one seat ends the attempt as a **draw**: that chit is *not delivered*, no score changes, `completed_rounds` is unchanged, the attempt number increases by one, and the engine immediately redeals (the seeded deal for the same round and the next attempt) with the **same initiator** and with every streak cleared. The redeal starts with the initial claim phase like any other deal. Forced passes and initiator passes count like any other pass.
+- New events: `DecisionTimedOut(seat, decision_kind)` comes first, followed by the ordinary events of whatever the timeout resolved; `AttemptDrawn(seat, consecutive_passes)` is followed by the redeal's `DealEvent`. Public views never contain a chit name; the private debug view of `AttemptDrawn` adds the chit. Existing events, `legal_actions` and their public views are unchanged. `timeout_action(state)` returns the one `TimeoutAction` a host may issue now (or `None`); `timeout_chit(state)` is the chit a forced pass would pick.
+
+```python
+from dataclasses import replace
+from chitai.engine import (
+    DeclineAction, GameConfig, PassAction, apply_action, new_game, timeout_action,
+)
+
+config = GameConfig(num_players=4, num_rounds=4, seed=42, pass_timeout_seconds=10)
+state = new_game(config).state
+for _ in range(4):                                    # every initial opportunity: decline
+    state = apply_action(state, DeclineAction(state.decision_seat)).state
+
+print(timeout_action(state))                          # the host's timer expired for the initiator
+result = apply_action(state, timeout_action(state))   # a forced pass of one of its four chits
+print([type(e).__name__ for e in result.events])
+# TimeoutAction(seat=0)
+# ['DecisionTimedOut', 'ChitPassed']
+
+seat = state.decision_seat
+chit = state.hands[seat][0]
+nine = replace(state, pass_streaks=((seat, chit.name, 9),))   # test setup: nine passes already made
+drawn = apply_action(nine, PassAction(seat, chit))            # the tenth is a draw
+print([type(e).__name__ for e in drawn.events])
+print(drawn.state.completed_rounds, drawn.state.attempt, drawn.state.initiator, drawn.state.pass_streaks)
+# ['AttemptDrawn', 'DealEvent']
+# 0 2 0 ()
+```
+
+**Limits of M6.** The simulation **draw safety cap** is not in the engine: §3A.6 and §5A assign it to the simulation runner (Milestone 8), which can stop a run when `state.attempt` exceeds its cap. Because timeouts never claim, a game driven only by timeouts need not end, so hosts and simulators must still bound their own loops. No wall-clock timestamps, latency model, observations, agents, simulation runner or UI exist.
 
 This is a library only; there is no game to run or play yet.

@@ -12,6 +12,7 @@ import hashlib
 import random
 
 DEAL = "deal"
+TIMEOUT = "timeout"  # M6: forced-pass selection; independent of every deal
 
 
 def derive_seed(master_seed: int, purpose: str, *indices: int) -> int:

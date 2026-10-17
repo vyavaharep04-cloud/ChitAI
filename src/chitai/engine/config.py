@@ -27,8 +27,8 @@ class GameConfig:
         num_players (§3A.6).
     pass_timeout_seconds: greater than 0 and at most 15 seconds; the room
         creator may choose a shorter duration (§3A.7). The default is the
-        maximum, 15 seconds. The timeout itself is not used until a later
-        milestone.
+        maximum, 15 seconds. The engine has no clock: the host uses this value
+        for its own timers and issues a `TimeoutAction` when one expires (M6).
     seed: master seed for all seeded randomness (§3A.7).
     """
 

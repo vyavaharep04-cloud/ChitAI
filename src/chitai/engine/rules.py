@@ -1,4 +1,4 @@
-"""Pure rule functions (§3A.3-§3A.4, §5A). M2: initial phase. M3: passing and claims. M5: reactions.
+"""Pure rule functions (§3A.3-§3A.4, §5A). M2: initial phase. M3: passing and claims. M5: reactions. M6: anti-stall streaks and timeout availability.
 
 No function here mutates anything or consults randomness. Matching uses chit
 names only (§3A.2).
@@ -8,13 +8,14 @@ from __future__ import annotations
 
 from collections import Counter
 
-from .actions import Action, ClaimAction, DeclineAction, PassAction, ReactAction
+from .actions import Action, ClaimAction, DeclineAction, PassAction, ReactAction, TimeoutAction
 from .chits import CHITS_PER_HAND, Chit
 from .config import GameConfig
 from .state import CLAIM_KINDS, DecisionKind, GameState, Phase
 
 RECEIVER_HAND_SIZE = CHITS_PER_HAND + 1  # a non-initiator holds five while deciding (§3A.4)
 INITIATOR_IN_TRANSIT_HAND_SIZE = CHITS_PER_HAND - 1  # the initiator holds three mid-cycle
+CONSECUTIVE_PASS_LIMIT = 10  # the tenth consecutive same-name pass by one player is a draw (§3A.6)
 
 
 def initial_claim_order(num_players: int, initiator: int) -> tuple[int, ...]:
@@ -112,3 +113,44 @@ def legal_actions(state: GameState) -> tuple[Action, ...]:
             return (ClaimAction(seat),) + passes
         return passes
     return ()
+
+
+def update_pass_streaks(
+    streaks: tuple[tuple[int, str, int], ...], seat: int, chit_name: str
+) -> tuple[tuple[tuple[int, str, int], ...], int]:
+    """The anti-stall streaks after `seat` passes a chit named `chit_name`, and
+    that seat's resulting count (M6, §3A.6).
+
+    Streaks are kept per player and per chit *name*: another physical copy of
+    the same name continues the streak, a different name restarts it at 1, and
+    other seats' entries are never touched. A result count of
+    `CONSECUTIVE_PASS_LIMIT` means the pass triggers a draw; the caller then
+    discards these streaks (a new attempt starts with none). Pure: the input is
+    not modified.
+    """
+    count = 1
+    kept = []
+    for entry_seat, entry_name, entry_count in streaks:
+        if entry_seat == seat:
+            count = entry_count + 1 if entry_name == chit_name else 1
+        else:
+            kept.append((entry_seat, entry_name, entry_count))
+    kept.append((seat, chit_name, count))
+    return tuple(sorted(kept)), count
+
+
+def timeout_action(state: GameState) -> TimeoutAction | None:
+    """The one `TimeoutAction` a host may issue now, or None (M6).
+
+    A timeout exists at every single decision point (initial claim, first
+    pass, receive, return) and, in the reaction phase, only for the last
+    remaining non-winner: no general reaction timeout applies while several
+    non-winners still need to react (§3A.5). `legal_actions` is deliberately
+    unchanged by M6; timeouts are host-issued, not player choices.
+    """
+    if state.phase is Phase.WIN_DECLARED:
+        pending = pending_reactors(state)
+        return TimeoutAction(pending[0]) if len(pending) == 1 else None
+    if state.phase in (Phase.INITIAL_CLAIMS, Phase.PASSING) and state.decision_seat is not None:
+        return TimeoutAction(state.decision_seat)
+    return None
