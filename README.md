@@ -13,7 +13,7 @@ This is a hypothesis, not a result. No experiments have been run, and no claim a
 
 ## Project status
 
-The gameplay rules and architecture have been finalized and documented. **Milestone 1 is implemented:** project scaffolding, `GameConfig` validation, fixed-name deck construction, seeded dealing, and starting-player rotation, with unit tests. Everything else is not implemented yet: no passing, claims, scoring, reactions, timeouts, anti-stall, agents, simulations, server, or browser UI. There is nothing playable yet.
+The gameplay rules and architecture have been finalized and documented. **Milestones 1 and 2 are implemented.** M1: project scaffolding, `GameConfig` validation, fixed-name deck construction, seeded dealing, and starting-player rotation. M2: game state, actions, events, invariants, and the **initial claim phase** (claim or decline, in deterministic order from the initiator). Everything else is not implemented yet: no passing, scoring, reactions, timeouts, anti-stall, agents, simulations, server, or browser UI. There is nothing playable yet.
 
 ## Documentation
 
@@ -48,5 +48,26 @@ config = GameConfig(num_players=4, num_rounds=8, seed=42)
 deal = deal_round(config, completed_round=0)
 print(deal.initiator, deal.hands[0])
 ```
+
+### What exists in Milestone 2
+
+The engine now models the initial claim phase (PROJECT_CONTEXT.md §3A.3):
+
+- `new_game(config)`: starts round 0 with the seeded deal and returns the first `GameState` plus its events. `start_from_deal(config, deal)` starts from a given `Deal`.
+- `apply_action(state, action)`: validates and applies a `ClaimAction(seat)` or `DeclineAction(seat)`. It returns `Accepted(state, events)` or `Rejected(reason, message)`. A rejected action changes nothing, applies no penalty, and consumes no event sequence number.
+- Each seat gets exactly one initial opportunity, in order from the initiator clockwise, whether or not its hand matches. A claim is valid only with four chits of one name; any other eligible claim is a false claim. The engine never claims for a player.
+- When every seat has declined, the phase becomes `PASSING` with the initiator to make the first pass (passing itself is not implemented).
+- `legal_actions(state)`, `check_invariants(state)` (run by the engine on every state it produces), and sequenced events with a `public_view()` (no chit identities) and a `debug_view()` (private; full hands).
+
+```python
+from chitai.engine import GameConfig, new_game, apply_action, ClaimAction, DeclineAction
+
+state = new_game(GameConfig(num_players=4, num_rounds=4, seed=42)).state
+step = apply_action(state, DeclineAction(0))      # seat 0 declines; seat 1 is next
+print(step.state.decision_seat)                   # 1
+print(apply_action(step.state, ClaimAction(3)))   # Rejected: not seat 3's opportunity
+```
+
+**Limits of M2.** A valid claim leaves the game in the holding phase `WIN_DECLARED` (reactions and scoring are Milestone 5). A false claim leaves it in `FALSE_CLAIM` (the penalty and round completion are Milestone 4). No scores are applied and `completed_rounds` is not incremented. There are no timers, so an automatic decline on timeout is not implemented (Milestone 6).
 
 This is a library only; there is no game to run or play yet.
