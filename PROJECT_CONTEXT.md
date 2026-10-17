@@ -3,7 +3,7 @@
 **Research title:** *ChitAI: An AI-Powered Multiplayer Game for Decision-Making Under Incomplete Information*
 **Repository:** `vyavaharep04-cloud/ChitAI`
 **Default branch:** `main`
-**Status:** Specification and architecture finalized (2026-10-17); implementation not started — no application code or tests exist yet **Last updated:** 2026-10-17
+**Status:** Specification and architecture finalized (2026-10-17). Milestone 1 implemented and tested locally (2026-10-17, uncommitted pending owner review); Milestones 2+ not started. **Last updated:** 2026-10-17
 
 > Maintenance rule: Treat this as a persistent project record. Do not overwrite existing history. Append dated milestone notes to the Change Log, including decisions, changes, tests, and next actions.
 
@@ -211,7 +211,7 @@ The precise signature can change; consistency and information restrictions matte
 
 ## 5A. Adopted architecture and module responsibilities (finalized 2026-10-17)
 
-**Status: planned design. No application code, modules, or tests exist yet.** Modules are created only when their milestone begins; none are created in advance as empty placeholders.
+**Status: planned design. [Update 2026-10-17: the Milestone 1 modules `engine/config.py`, `chits.py`, `rng.py`, `deal.py` now exist; all other modules remain planned and are not created.]** Modules are created only when their milestone begins; none are created in advance as empty placeholders.
 
 ### Technology decisions
 - Python 3.12-compatible code; pytest for automated tests.
@@ -324,7 +324,7 @@ Avoid starting with a complex UI or adding advanced algorithms before the rules 
 
 The order follows the delivery priorities above. Only Milestone 1 is fixed; later milestones are indicative and may be re-sliced when they begin. A milestone is complete only when its tests have actually been run and the results recorded in the change log.
 
-**M1 — Scaffolding, configuration, deck, seeded deal, rotation (strictly limited):**
+**M1 — Scaffolding, configuration, deck, seeded deal, rotation (strictly limited)** *[Implemented and tested 2026-10-17; see Change Log. Awaiting owner review.]*:
 1. `pyproject.toml` and pytest configuration.
 2. Minimal `src/chitai/engine` package.
 3. `GameConfig` and validation.
@@ -399,7 +399,7 @@ All other gameplay and architecture decisions are settled and recorded in §3A a
 - [ ] Initial claim order, automatic decline on timeout, and ineligible-claim rejection tested.
 - [ ] Completed rounds and draw attempts tracked separately and tested.
 - [ ] Simulation draw safety cap implemented and tested.
-- [ ] README contains setup and run instructions.
+- [ ] README contains setup and run instructions. *[Setup and test instructions exist as of M1; there is nothing to run yet, so this stays unticked.]*
 
 ## 11. Collaboration workflow
 
@@ -437,3 +437,20 @@ For each substantial change:
 - Definition-of-done checkboxes added but none ticked; no implementation milestone has been completed.
 - Open questions are recorded in §9 and none blocks Milestone 1.
 - Next: commit this documentation change on a docs branch for review, then begin Milestone 1.
+
+### 2026-10-17 — Milestone 1 implemented (local, uncommitted)
+- **Scope:** exactly the M1 list in §8A: `pyproject.toml` and pytest configuration; minimal `src/chitai/engine` package; `GameConfig` and validation; fixed-name deck; seeded dealing; starting-player rotation; unit tests; README setup/testing instructions. No passing, claims, scoring, reactions, timeouts, anti-stall, agents, simulation, server, or UI code was written.
+- **Files added:** `pyproject.toml`, `src/chitai/__init__.py`, `src/chitai/engine/{__init__,config,chits,rng,deal}.py`, `tests/engine/{test_config,test_chits,test_rng,test_deal,test_rotation}.py`. **Files modified:** `README.md` (status, setup, testing), `.gitignore` (added `*.egg-info/`, `build/`, `dist/`), this document.
+- **Implementation decisions** (details the documents left unspecified; none changes a rule in §3A):
+  1. *Chit names:* §3A.2 says names are fixed but does not list them. Placeholder names `Sun, Moon, Star, Cloud, Flame, Wave, Leaf, Stone` are defined in `chits.py`; N players use the first N. **Owner may rename them; this is a one-line change and affects no rule.**
+  2. *Physical chit instances:* `Chit(name, copy)` with `copy` 0-3. `Chit.matches` compares names only.
+  3. *Seed derivation:* SHA-256 of `"{seed}:{purpose}:{indices}"`, first 8 bytes (never built-in `hash()`). Streams are stateless per (purpose, indices): the deal for (completed round, attempt) depends only on the master seed, so deals are reproducible in any order and independent of other streams (e.g. timeouts). This realizes the "purpose-separated streams" of §5A without a stateful stream manager.
+  4. *Attempt numbering:* attempts are numbered from 1 (§3A.1 says only "incremented"). A redeal after a draw is `deal_round(config, same_round, attempt + 1)`, with the same initiator, as §3A.6 requires.
+  5. *Deal layout:* the shuffled deck is dealt in consecutive blocks of four, seat 0 first. Dealing order is not otherwise specified by the rules.
+  6. *Config validation:* integer-only (booleans rejected) for players, rounds, and seed; `pass_timeout_seconds` must be greater than 0 and at most 15 (zero is rejected as meaningless; default 15). NaN and infinity are rejected. The draw safety cap (§3A.6) is deliberately not in `GameConfig` yet; it belongs to M6.
+  7. *Deal API:* `deal_round` validates `0 <= completed_round < num_rounds` and `attempt >= 1`. `initiator_for_round` is a function of the completed-round index only, so a draw cannot change the initiator.
+  8. *Packaging:* setuptools, `src` layout, Python >= 3.12, no runtime dependencies, pytest as the `dev` extra.
+- **Tests actually run (2026-10-17, Python 3.12.3, pytest 9.1.1, Linux):** `pytest` -> **141 passed in 0.29-0.36 s**, both in the development virtualenv and in a fresh virtualenv created with `pip install -e ".[dev]"` (the README procedure). Sanity check: three deliberate code mutations (rotation off by one, three-chit hands, built-in `hash()` seeding) each made tests fail, then the originals were restored and the suite passed again. Not run: Windows/macOS, other Python versions. No coverage measurement was taken.
+- **Not implemented / limits:** no game state, actions, or events exist; the deal is not yet connected to any phase or decision point; DoD checkboxes remain unticked.
+- **Open questions §9:** none became blocking or was resolved by M1.
+- **Next:** owner reviews and commits M1 on a feature branch; then M2 (state, actions, events, invariants, initial claim phase).
