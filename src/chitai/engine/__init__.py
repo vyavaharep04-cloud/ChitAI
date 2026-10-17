@@ -1,6 +1,7 @@
 """Pure game engine. M1: configuration, deck, seeded deal, rotation.
 M2: state, actions, events, invariants, and the initial claim phase.
-M3: sequential passing and ordinary claim opportunities."""
+M3: sequential passing and ordinary claim opportunities.
+M4: false-claim penalties, round completion, and multi-round progression."""
 
 from .actions import Action, ClaimAction, DeclineAction, PassAction
 from .chits import CHIT_NAMES, CHITS_PER_HAND, COPIES_PER_NAME, Chit, build_deck, chit_names_for
@@ -11,16 +12,20 @@ from .config import (
     ConfigError,
     GameConfig,
 )
-from .deal import FIRST_ATTEMPT, Deal, deal_round, initiator_for_round
+from .deal import FIRST_ATTEMPT, Deal, deal_round, initiator_for_round, rotation_initiator
 from .engine import Accepted, RejectionReason, Rejected, apply_action, new_game, start_from_deal
 from .events import (
     ChitPassed,
     ClaimMade,
+    ROUND_OUTCOME_FALSE_CLAIM,
     DealEvent,
     Event,
+    FalseClaimPenalized,
+    GameCompleted,
     InitialClaimDeclined,
     InitialClaimMade,
     InitialClaimsResolved,
+    RoundCompleted,
 )
 from .invariants import InvariantViolation, check_invariants
 from .rng import derive_seed, make_rng
@@ -34,6 +39,7 @@ from .rules import (
     legal_actions,
     next_seat,
 )
+from .scoring import false_claim_penalty, false_claim_score_changes
 from .state import CLAIM_KINDS, DecisionKind, GameState, Phase
 
 __all__ = [
@@ -56,6 +62,7 @@ __all__ = [
     "Deal",
     "deal_round",
     "initiator_for_round",
+    "rotation_initiator",
     "derive_seed",
     "make_rng",
     "Accepted",
@@ -66,8 +73,14 @@ __all__ = [
     "start_from_deal",
     "ChitPassed",
     "ClaimMade",
+    "ROUND_OUTCOME_FALSE_CLAIM",
     "DealEvent",
     "Event",
+    "FalseClaimPenalized",
+    "GameCompleted",
+    "RoundCompleted",
+    "false_claim_penalty",
+    "false_claim_score_changes",
     "InitialClaimDeclined",
     "InitialClaimMade",
     "InitialClaimsResolved",

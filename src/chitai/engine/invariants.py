@@ -1,4 +1,5 @@
-"""Engine invariants (§5A, constraint 8). M2: initial phase. M3: passing.
+"""Engine invariants (§5A, constraint 8). M2: initial phase. M3: passing. M4: scores,
+round completion and the terminal state.
 
 `check_invariants` is called by the engine on every state it produces. A
 violation means an engine bug (or a malformed deal handed to the engine) and
@@ -17,8 +18,9 @@ from __future__ import annotations
 from collections import Counter
 
 from .chits import CHITS_PER_HAND, COPIES_PER_NAME, Chit, build_deck, chit_names_for
-from .deal import FIRST_ATTEMPT, initiator_for_round
+from .deal import FIRST_ATTEMPT, initiator_for_round, rotation_initiator
 from .rules import initial_claim_order, is_valid_claim
+from .scoring import false_claim_penalty
 from .state import CLAIM_KINDS, DecisionKind, GameState, Phase
 
 
@@ -41,16 +43,25 @@ def check_invariants(state: GameState) -> None:
 
     # --- counters and identity -------------------------------------------
     _require(isinstance(state.phase, Phase), f"phase must be a Phase, got {state.phase!r}")
+    over = state.phase is Phase.GAME_OVER
+    # While a round is being played its index is below the configured total;
+    # a finished game has completed exactly the configured total (M4).
+    upper = config.num_rounds if over else config.num_rounds - 1
     _require(
-        _is_int(state.completed_rounds) and 0 <= state.completed_rounds < config.num_rounds,
+        _is_int(state.completed_rounds) and 0 <= state.completed_rounds <= upper,
         f"completed_rounds out of range: {state.completed_rounds!r}",
     )
     _require(
         _is_int(state.attempt) and state.attempt >= FIRST_ATTEMPT,
         f"attempt must be an integer >= {FIRST_ATTEMPT}: {state.attempt!r}",
     )
+    expected_initiator = (
+        rotation_initiator(n, state.completed_rounds)
+        if over
+        else initiator_for_round(config, state.completed_rounds)
+    )
     _require(
-        state.initiator == initiator_for_round(config, state.completed_rounds),
+        state.initiator == expected_initiator,
         f"initiator {state.initiator!r} does not match round {state.completed_rounds}",
     )
     _require(_is_int(state.next_seq) and state.next_seq >= 0, f"bad next_seq {state.next_seq!r}")
@@ -58,6 +69,7 @@ def check_invariants(state: GameState) -> None:
         isinstance(state.scores, tuple) and len(state.scores) == n and all(map(_is_int, state.scores)),
         f"scores must be a tuple of {n} integers: {state.scores!r}",
     )
+    _check_scores(state)
 
     # --- hands: sizes, 4N total, four copies per name, no duplicates -----
     _require(
@@ -98,7 +110,13 @@ def check_invariants(state: GameState) -> None:
         f"bad claim_decision_kind {state.claim_decision_kind!r}",
     )
 
-    if state.phase is Phase.INITIAL_CLAIMS:
+    if over:
+        _require(state.attempt == FIRST_ATTEMPT, f"a finished game has attempt 1, got {state.attempt}")
+        _require(resolved == 0, f"a finished game has no initial claims resolved, got {resolved}")
+        _require(state.decision_seat is None and state.decision_kind is None, "no decision point expected")
+        _require(_no_outcome(state), "a finished game has no winner, false claimant or claim kind")
+        _check_final_hand_shape(state)
+    elif state.phase is Phase.INITIAL_CLAIMS:
         _require(resolved < n, "initial claims all resolved but phase is still INITIAL_CLAIMS")
         _require(state.decision_kind is DecisionKind.INITIAL_CLAIM, "wrong decision kind")
         _require(
@@ -167,3 +185,32 @@ def _check_hand_sizes(state: GameState, kind: DecisionKind, seat: int) -> None:
         expected[seat] = CHITS_PER_HAND + 1
     actual = [len(hand) for hand in state.hands]
     _require(actual == expected, f"hand sizes {actual} != expected {expected} at {kind.value}")
+
+
+def _check_scores(state: GameState) -> None:
+    """Score values reachable in M4. Only false claims change scores, and each
+    one deducts exactly N-1 from one seat, so every score is zero or a negative
+    multiple of N-1, and the total deducted cannot exceed one penalty per
+    completed round. (A game started from a crafted later round carries fewer
+    penalties than completed rounds, hence "at most".) M5 adds positive scores
+    and must revise this check."""
+    penalty = false_claim_penalty(state.config.num_players)
+    for seat, score in enumerate(state.scores):
+        _require(score <= 0 and score % penalty == 0, f"seat {seat} score {score} is not a multiple of -{penalty}")
+    penalties = -sum(state.scores) // penalty
+    _require(
+        penalties <= state.completed_rounds,
+        f"{penalties} false-claim penalties exceed {state.completed_rounds} completed rounds",
+    )
+
+
+def _check_final_hand_shape(state: GameState) -> None:
+    """A finished game keeps the hands of its last claim. Chit conservation is
+    checked above for every phase; here only the shape: all hands hold four, or
+    the claim was a receiver's, so one seat holds five and one (the initiator at
+    that time) holds three."""
+    sizes = sorted(len(hand) for hand in state.hands)
+    n = state.config.num_players
+    all_four = [CHITS_PER_HAND] * n
+    receive_shape = sorted([CHITS_PER_HAND - 1, CHITS_PER_HAND + 1] + [CHITS_PER_HAND] * (n - 2))
+    _require(sizes in (all_four, receive_shape), f"final hand sizes {sizes} are not a claim-time shape")

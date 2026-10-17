@@ -1,4 +1,6 @@
 """Sequenced engine events with separate public and debug views (§5A, §4, §6, §3A.8).
+M4 adds FalseClaimPenalized, RoundCompleted and GameCompleted; the next round's
+start is an ordinary DealEvent.
 
 Every event carries a `seq` from the single authoritative sequence, plus the
 completed-round index and attempt number (§6).
@@ -142,3 +144,71 @@ class ClaimMade(Event):
 
     def debug_view(self) -> dict[str, Any]:
         return {**self.public_view(), "hand": [_chit_json(c) for c in self.hand]}
+
+
+ROUND_OUTCOME_FALSE_CLAIM = "false_claim"
+
+
+@dataclass(frozen=True)
+class FalseClaimPenalized(Event):
+    """The score effect of a false claim (§3A.5). Scores are public information;
+    no chit identity appears. `completed_round` is the round being penalized.
+
+    seat: the false claimant. penalty: points deducted, N-1 (positive).
+    score_changes: per-seat change this round. scores: per-seat totals after.
+    """
+
+    seat: int
+    penalty: int
+    score_changes: tuple[int, ...]
+    scores: tuple[int, ...]
+
+    type: ClassVar[str] = "false_claim_penalized"
+
+    def public_view(self) -> dict[str, Any]:
+        return {
+            **self._base(),
+            "seat": self.seat,
+            "penalty": self.penalty,
+            "score_changes": list(self.score_changes),
+            "scores": list(self.scores),
+        }
+
+
+@dataclass(frozen=True)
+class RoundCompleted(Event):
+    """A round ended and counted toward the configured total (§3A.6).
+    `completed_round` is the index of the round that just ended;
+    `rounds_completed` is the running total after it."""
+
+    outcome: str
+    claimant: int
+    rounds_completed: int
+
+    type: ClassVar[str] = "round_completed"
+
+    def public_view(self) -> dict[str, Any]:
+        return {
+            **self._base(),
+            "outcome": self.outcome,
+            "claimant": self.claimant,
+            "rounds_completed": self.rounds_completed,
+        }
+
+
+@dataclass(frozen=True)
+class GameCompleted(Event):
+    """Every configured round is complete; no further action is accepted.
+    `completed_round` equals the configured round count and `attempt` is 1."""
+
+    rounds_completed: int
+    final_scores: tuple[int, ...]
+
+    type: ClassVar[str] = "game_completed"
+
+    def public_view(self) -> dict[str, Any]:
+        return {
+            **self._base(),
+            "rounds_completed": self.rounds_completed,
+            "final_scores": list(self.final_scores),
+        }

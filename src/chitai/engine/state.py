@@ -1,4 +1,5 @@
 """Authoritative game state (§3A.1, §5A). M2: initial claim phase. M3: passing.
+M4: false-claim round completion, multi-round progression, terminal state.
 
 `GameState` is immutable. The engine produces a new state for every accepted
 action and leaves the old one untouched, so a rejected action cannot change
@@ -11,6 +12,23 @@ and `FALSE_CLAIM` (an eligible claim failed matching; the penalty and round
 completion are M4) are *holding* phases. Through M3 no scores are applied and
 `completed_rounds` is not incremented in either of them. A claim made during
 ordinary passing (M3) ends in the same holding phases as an initial claim.
+
+Milestone 4 changes
+-------------------
+A false claim now completes the round inside the same `apply_action` call: the
+penalty is applied, `completed_rounds` increases by one, and the engine either
+deals the next round (`INITIAL_CLAIMS`, attempt 1, rotated initiator, scores
+carried over) or, after the last configured round, returns `GAME_OVER`.
+`FALSE_CLAIM` is therefore a *transient* phase: the engine builds and validates
+it internally but never returns it, so callers never see it. It stays in the
+enum so the claim-consistency invariants keep a state to check. `WIN_DECLARED`
+is still a holding phase (valid-win scoring and completion are M5).
+
+`GAME_OVER` has `completed_rounds == config.num_rounds`, attempt 1, no decision
+point and no outcome fields. It keeps the hands of the final claim (the board
+as it ended), so chit conservation still holds. Its `initiator` is the rotation
+value `completed_rounds % num_players`, which is seat 0 because the round count
+is a multiple of N.
 
 Hand sizes (§3A.4): chit delivery is atomic, so no chit is ever "in transit"
 between states. While the initiator's chit is being passed around, the
@@ -30,7 +48,8 @@ class Phase(Enum):
     INITIAL_CLAIMS = "initial_claims"  # §3A.3: one claim opportunity per seat
     PASSING = "passing"  # ordinary sequential passing (M3)
     WIN_DECLARED = "win_declared"  # holding phase until M5
-    FALSE_CLAIM = "false_claim"  # holding phase until M4
+    FALSE_CLAIM = "false_claim"  # transient since M4: validated internally, never returned by the engine
+    GAME_OVER = "game_over"  # M4: terminal; every configured round is complete
 
 
 class DecisionKind(Enum):
@@ -64,7 +83,7 @@ class GameState:
         engine is not waiting for any player.
     initial_claims_resolved: how many seats' initial opportunities are
         resolved (a claim counts as resolving its own opportunity).
-    scores: per-seat totals. Not modified in M2.
+    scores: per-seat totals. Changed only by false-claim penalties (M4).
     winner / false_claimant: set only in WIN_DECLARED / FALSE_CLAIM.
     next_seq: sequence number of the next event (single authoritative order).
     claim_decision_kind: the decision kind at which the claim was made; set

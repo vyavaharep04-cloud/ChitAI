@@ -133,17 +133,22 @@ def test_valid_claim_by_each_seat_position_fixes_winner(n):
         result = apply_action(state, ClaimAction(seat))
         assert isinstance(result, Accepted)
         new = result.state
+        event = result.events[0]
+        assert event.type == "initial_claim_made" and event.seat == seat
         if has_match:
             assert new.phase is Phase.WIN_DECLARED and new.winner == seat
             assert new.false_claimant is None
+            assert new.decision_seat is None and new.decision_kind is None
+            assert new.scores == (0,) * n  # valid-win scoring is M5
+            assert new.completed_rounds == state.completed_rounds  # and so is its completion
+            assert new.attempt == state.attempt
+            assert len(result.events) == 1
         else:
-            assert new.phase is Phase.FALSE_CLAIM and new.false_claimant == seat
-        assert new.decision_seat is None and new.decision_kind is None
-        assert new.scores == (0,) * n  # M2 applies no scores
-        assert new.completed_rounds == state.completed_rounds  # M2 completes no round
-        assert new.attempt == state.attempt
-        (event,) = result.events
-        assert event.type == "initial_claim_made" and event.seat == seat
+            # M4: a false claim completes the round and the next one starts.
+            assert event.valid is False
+            assert new.phase is Phase.INITIAL_CLAIMS and new.false_claimant is None
+            assert new.completed_rounds == state.completed_rounds + 1 and new.attempt == 1
+            assert new.scores[seat] == -(n - 1) and sum(new.scores) == -(n - 1)
 
 
 def test_matching_player_may_decline_engine_never_claims_for_them():
@@ -168,10 +173,10 @@ def test_non_matching_player_may_claim_and_it_is_a_false_claim():
     state = start(make_config(4), matching=set())
     result = apply_action(state, ClaimAction(0))
     assert isinstance(result, Accepted)
-    assert result.state.phase is Phase.FALSE_CLAIM
-    assert result.state.false_claimant == 0 and result.state.winner is None
-    assert result.state.scores == (0, 0, 0, 0)  # penalty belongs to M4
     assert result.events[0].valid is False
+    # M4: the false claim is penalized and completes the round (see test_false_claims.py).
+    assert result.state.phase is Phase.INITIAL_CLAIMS and result.state.completed_rounds == 1
+    assert result.state.scores == (-3, 0, 0, 0)
 
 
 def test_three_of_a_kind_claim_is_false_in_initial_phase():
@@ -186,8 +191,8 @@ def test_three_of_a_kind_claim_is_false_in_initial_phase():
     hands = (tuple(sun[:3] + moon[:1]), tuple(moon[1:] + sun[3:]), *deal.hands[2:])
     state = start_from_deal(config, replace(deal, hands=hands)).state
     result = apply_action(state, ClaimAction(0))  # seat 0: three Suns + one Moon
-    assert result.state.phase is Phase.FALSE_CLAIM
-    assert result.state.false_claimant == 0
+    assert result.events[0].valid is False
+    assert result.state.scores == (-3, 0, 0, 0) and result.state.completed_rounds == 1
 
 
 def test_claim_by_later_seat_in_order_is_rejected_without_penalty():
@@ -231,13 +236,14 @@ def test_first_valid_claim_fixes_winner_and_later_claims_cannot_replace_it():
     assert won.winner == 1
 
 
-def test_no_actions_after_false_claim():
-    state = start(make_config(4))
-    over = apply_action(state, ClaimAction(0)).state
-    assert over.phase is Phase.FALSE_CLAIM
+def test_no_actions_after_false_claim_in_the_final_round():
+    # M4: after a false claim the next round begins, so "no further action" holds
+    # only once the final configured round has ended.
+    state = start(make_config(4, rounds=4), completed_round=3)
+    over = apply_action(state, ClaimAction(state.decision_seat)).state
+    assert over.phase is Phase.GAME_OVER
     result = apply_action(over, ClaimAction(1))
     assert isinstance(result, Rejected) and result.reason is RejectionReason.PHASE_NOT_ACCEPTING
-    assert over.false_claimant == 0
 
 
 # --- invalid input ----------------------------------------------------------
@@ -298,14 +304,15 @@ def test_random_walks_keep_invariants_and_terminate(n):
     for seed in range(40):
         state = new_game(GameConfig(n, n, seed=seed)).state
         steps = 0
-        while state.phase is Phase.INITIAL_CLAIMS:
+        while state.phase is Phase.INITIAL_CLAIMS and state.completed_rounds == 0:
             action = (ClaimAction if rng.random() < 0.25 else DeclineAction)(state.decision_seat)
             state = apply_action(state, action).state
             check_invariants(state)
             steps += 1
             assert steps <= n
-        assert state.phase in (Phase.PASSING, Phase.WIN_DECLARED, Phase.FALSE_CLAIM)
-        assert state.scores == (0,) * n
+        # M4: a false claim starts the next round, so the walk may restart; it
+        # ends at PASSING, a valid claim, a restarted round (INITIAL_CLAIMS) or GAME_OVER.
+        assert state.phase in (Phase.PASSING, Phase.WIN_DECLARED, Phase.INITIAL_CLAIMS, Phase.GAME_OVER)
         assert all(len(h) == 4 for h in state.hands)
 
 
@@ -315,5 +322,8 @@ def test_outcome_matches_actual_hand_over_many_real_deals():
         state = new_game(GameConfig(4, 4, seed=seed)).state
         hand = state.hands[0]
         result = apply_action(state, ClaimAction(0)).state
-        expected = Phase.WIN_DECLARED if len({c.name for c in hand}) == 1 else Phase.FALSE_CLAIM
-        assert result.phase is expected
+        if len({c.name for c in hand}) == 1:
+            assert result.phase is Phase.WIN_DECLARED and result.completed_rounds == 0
+        else:  # M4: a false claim completes the round and starts the next one
+            assert result.phase is Phase.INITIAL_CLAIMS and result.completed_rounds == 1
+            assert result.scores == (-3, 0, 0, 0)

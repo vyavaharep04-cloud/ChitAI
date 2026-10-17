@@ -13,7 +13,7 @@ This is a hypothesis, not a result. No experiments have been run, and no claim a
 
 ## Project status
 
-The gameplay rules and architecture have been finalized and documented. **Milestones 1, 2 and 3 are implemented.** M1: project scaffolding, `GameConfig` validation, fixed-name deck construction, seeded dealing, and starting-player rotation. M2: game state, actions, events, invariants, and the **initial claim phase** (claim or decline, in deterministic order from the initiator). M3: **sequential passing** and ordinary claim opportunities (a five-chit receiver, and the initiator when the chit returns). Everything else is not implemented yet: no false-claim penalty, round completion, scoring, reactions, timeouts, anti-stall, agents, simulations, server, or browser UI. There is nothing playable yet.
+The gameplay rules and architecture have been finalized and documented. **Milestones 1, 2 and 3 are implemented and merged into `main`; Milestone 4 is implemented on a feature branch awaiting review.** M1: project scaffolding, `GameConfig` validation, fixed-name deck construction, seeded dealing, and starting-player rotation. M2: game state, actions, events, invariants, and the **initial claim phase** (claim or decline, in deterministic order from the initiator). M3: **sequential passing** and ordinary claim opportunities (a five-chit receiver, and the initiator when the chit returns). M4: **false-claim penalties, round completion, and multi-round progression** (rotating initiator, fresh deals, a terminal state). Everything else is not implemented yet: no valid-win scoring, reactions, timeouts, anti-stall draws, agents, simulations, server, or browser UI. There is nothing playable yet.
 
 ## Documentation
 
@@ -68,7 +68,7 @@ print(step.state.decision_seat)                   # 1
 print(apply_action(step.state, ClaimAction(3)))   # Rejected: not seat 3's opportunity
 ```
 
-**Limits of M2.** A valid claim leaves the game in the holding phase `WIN_DECLARED` (reactions and scoring are Milestone 5). A false claim leaves it in `FALSE_CLAIM` (the penalty and round completion are Milestone 4). No scores are applied and `completed_rounds` is not incremented. There are no timers, so an automatic decline on timeout is not implemented (Milestone 6).
+**Limits of M2.** A valid claim leaves the game in the holding phase `WIN_DECLARED` (reactions and scoring are Milestone 5). *(M2 also left false claims in a `FALSE_CLAIM` holding phase; Milestone 4 replaced that, see below.)* There are no timers, so an automatic decline on timeout is not implemented (Milestone 6).
 
 ### What exists in Milestone 3
 
@@ -92,6 +92,29 @@ print(len(state.hands[0]), len(state.hands[1]))      # 3 5
 print(legal_actions(state)[0])                       # ClaimAction(seat=1)
 ```
 
-**Limits of M3.** A claim made during passing, valid or false, ends in the same holding phases as in M2 (`WIN_DECLARED` / `FALSE_CLAIM`): no penalty, no scoring, no round completion (Milestones 4 and 5). Nothing yet stops an endless pass cycle; anti-stall draws and timeouts are Milestone 6, so callers must bound their own loops.
+**Limits of M3.** A valid claim made during passing ends in the `WIN_DECLARED` holding phase: no scoring and no round completion (Milestone 5). *(False claims are now completed by Milestone 4, see below.)* Nothing yet stops an endless pass cycle; anti-stall draws and timeouts are Milestone 6, so callers must bound their own loops.
+
+
+### What exists in Milestone 4
+
+A false claim now ends the round and the game moves on (PROJECT_CONTEXT.md §3A.5-§3A.6):
+
+- An eligible claim that fails its matching rule (four of four at an initial or initiator-return claim, four of five for a receiving non-initiator) is a false claim. The claimant scores `-(N-1)`, every other seat scores 0, and no winner or reaction score is awarded. An ineligible claim is still rejected with no penalty and no change of state, scores, round counter or event sequence.
+- The same `apply_action` call completes the round: `completed_rounds` rises by exactly one, scores are carried over, and the engine deals the next round (a fresh seeded deal for the new completed-round index, attempt 1, the initiator rotated one seat clockwise; seat 0 starts). After the last configured round the phase is `GAME_OVER` and the engine accepts no further action.
+- Deals stay reproducible from the master seed, the completed-round index and the attempt number. Rejected actions consume neither randomness nor event sequence numbers, and event sequence numbers stay contiguous across round boundaries.
+- New events: `FalseClaimPenalized` (score changes and totals), `RoundCompleted`, and `GameCompleted` (final scores). The next round starts with an ordinary `DealEvent`. Public views contain no chit identities.
+- `false_claim_penalty(n)` and `false_claim_score_changes(n, claimant)` (new `scoring.py`) are the pure scoring functions.
+
+```python
+from chitai.engine import GameConfig, new_game, apply_action, ClaimAction, Phase
+
+state = new_game(GameConfig(num_players=4, num_rounds=4, seed=42)).state
+result = apply_action(state, ClaimAction(0))   # seat 0 claims at once
+# if its hand did not match, the claim was false:
+print(result.state.scores, result.state.completed_rounds, result.state.initiator)
+# e.g. (-3, 0, 0, 0) 1 1   (seat 0 penalized, round 1 begins with seat 1 as initiator)
+```
+
+**Limits of M4.** A valid claim still ends in the `WIN_DECLARED` holding phase: no winner score, no reactions, and the round is not completed (Milestone 5), so a game that reaches a valid claim does not progress further yet. There are no draws, forced passes or timeouts (Milestone 6), so callers must still bound their own pass loops. `Phase.FALSE_CLAIM` remains in the enum only as an internal transient phase; the engine never returns it.
 
 This is a library only; there is no game to run or play yet.

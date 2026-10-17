@@ -1,9 +1,12 @@
 """The single authoritative engine (§5A). M2: initial claim phase. M3: sequential passing.
+M4: false-claim round completion and multi-round progression.
 
 `apply_action` validates every request itself; the caller (UI, agent,
 simulator) is never trusted. A rejected action returns `Rejected` and the
 previous state is untouched. Accepted actions return the new state and the
-sequenced events. No random choices occur through M3 (timeouts are M6).
+sequenced events. No random choices occur through M4: next-round deals are a
+pure function of (master seed, completed-round index, attempt), so nothing
+stateful is consumed (timeouts are M6).
 """
 
 from __future__ import annotations
@@ -14,15 +17,19 @@ from enum import Enum
 from .actions import Action, ClaimAction, DeclineAction, PassAction
 from .chits import Chit
 from .config import GameConfig
-from .deal import FIRST_ATTEMPT, Deal, deal_round
+from .deal import FIRST_ATTEMPT, Deal, deal_round, rotation_initiator
 from .events import (
     ChitPassed,
     ClaimMade,
+    ROUND_OUTCOME_FALSE_CLAIM,
     DealEvent,
     Event,
+    FalseClaimPenalized,
+    GameCompleted,
     InitialClaimDeclined,
     InitialClaimMade,
     InitialClaimsResolved,
+    RoundCompleted,
 )
 from .invariants import check_invariants
 from .rules import (
@@ -32,6 +39,7 @@ from .rules import (
     is_valid_seat,
     next_seat,
 )
+from .scoring import false_claim_penalty, false_claim_score_changes
 from .state import CLAIM_KINDS, DecisionKind, GameState, Phase
 
 
@@ -66,16 +74,24 @@ def new_game(config: GameConfig) -> Accepted:
 
 
 def start_from_deal(config: GameConfig, deal: Deal) -> Accepted:
-    """Begin an attempt from a given `Deal`.
+    """Begin an attempt from a given `Deal` with zero scores and sequence 0.
 
-    M2 does not carry state between rounds (scores are zero; round
-    progression is M4), so this is also how a later round's initial phase, or
-    a hand-crafted deal, is started. Raises `InvariantViolation` if the deal is
-    inconsistent with the config (wrong initiator, bad deck, wrong hand sizes).
+    This is how round 0, a crafted deal, or a game resumed at a later round is
+    started. Rounds after a false claim are started by the engine itself and
+    carry scores and the event sequence forward. Raises `InvariantViolation` if
+    the deal is inconsistent with the config (wrong initiator, bad deck, wrong
+    hand sizes).
     """
     if not isinstance(deal, Deal):
         raise TypeError(f"deal must be a Deal, got {type(deal).__name__}")
-    n = config.num_players
+    state, event = _start_round(config, deal, (0,) * config.num_players, 0)
+    return Accepted(state, (event,))
+
+
+def _start_round(
+    config: GameConfig, deal: Deal, scores: tuple[int, ...], seq: int
+) -> tuple[GameState, DealEvent]:
+    """The state at the start of an attempt, plus its `DealEvent` numbered `seq`."""
     state = GameState(
         config=config,
         completed_rounds=deal.completed_round,
@@ -86,20 +102,20 @@ def start_from_deal(config: GameConfig, deal: Deal) -> Accepted:
         decision_kind=DecisionKind.INITIAL_CLAIM,
         hands=deal.hands,
         initial_claims_resolved=0,
-        scores=(0,) * n,
+        scores=scores,
         winner=None,
         false_claimant=None,
-        next_seq=1,
+        next_seq=seq + 1,
     )
     check_invariants(state)
     event = DealEvent(
-        seq=0,
+        seq=seq,
         completed_round=deal.completed_round,
         attempt=deal.attempt,
         initiator=deal.initiator,
         hands=deal.hands,
     )
-    return Accepted(state, (event,))
+    return state, event
 
 
 def apply_action(state: GameState, action: object) -> Accepted | Rejected:
@@ -115,9 +131,10 @@ def apply_action(state: GameState, action: object) -> Accepted | Rejected:
     if not is_valid_seat(state.config, action.seat):
         return Rejected(RejectionReason.INVALID_SEAT, f"invalid seat {action.seat!r}")
     if state.phase not in (Phase.INITIAL_CLAIMS, Phase.PASSING):
+        what = "the game is over" if state.phase is Phase.GAME_OVER else f"phase {state.phase.value}"
         return Rejected(
             RejectionReason.PHASE_NOT_ACCEPTING,
-            f"no action is accepted in phase {state.phase.value}",
+            f"no action is accepted: {what}",
         )
     if action.seat != state.decision_seat:
         what = "pass" if isinstance(action, PassAction) else "claim opportunity"
@@ -191,8 +208,9 @@ def _apply_pass(state: GameState, seat: int, chit: Chit) -> Accepted:
 
 
 def _apply_ordinary_claim(state: GameState, seat: int) -> Accepted:
-    """A claim at a receive or return opportunity. Valid claims and false claims
-    end in the same M2 holding phases as initial claims (§9 question 8)."""
+    """A claim at a receive or return opportunity. A valid claim ends in the
+    WIN_DECLARED holding phase (M5 resolves it, §9 question 8); a false claim
+    completes the round (M4)."""
     hand = state.hands[seat]
     valid = is_valid_claim(state.decision_kind, hand)
     event = ClaimMade(
@@ -214,6 +232,8 @@ def _apply_ordinary_claim(state: GameState, seat: int) -> Accepted:
         next_seq=state.next_seq + 1,
     )
     check_invariants(new_state)
+    if not valid:
+        return _complete_false_claim(new_state, (event,))
     return Accepted(new_state, (event,))
 
 
@@ -240,7 +260,84 @@ def _apply_initial_claim(state: GameState, seat: int) -> Accepted:
         next_seq=state.next_seq + 1,
     )
     check_invariants(new_state)
+    if not valid:
+        return _complete_false_claim(new_state, (event,))
     return Accepted(new_state, (event,))
+
+
+def _complete_false_claim(claim_state: GameState, events: tuple[Event, ...]) -> Accepted:
+    """Finish a round that ended in a false claim (§3A.5, §3A.6).
+
+    `claim_state` is the transient, already-validated FALSE_CLAIM state and
+    `events` holds the claim event just produced. The claimant loses N-1
+    points, every other seat scores 0, `completed_rounds` rises by exactly one,
+    and the engine then either deals the next round or ends the game. Scores
+    are carried over; attempt numbering restarts at 1; the next round's deal
+    depends only on (master seed, completed-round index, attempt 1).
+    """
+    config = claim_state.config
+    n = config.num_players
+    claimant = claim_state.false_claimant
+    round_index, attempt = claim_state.completed_rounds, claim_state.attempt
+    rounds_completed = round_index + 1
+
+    changes = false_claim_score_changes(n, claimant)
+    scores = tuple(total + change for total, change in zip(claim_state.scores, changes))
+    seq = claim_state.next_seq
+    out: list[Event] = list(events)
+    out.append(
+        FalseClaimPenalized(
+            seq=seq,
+            completed_round=round_index,
+            attempt=attempt,
+            seat=claimant,
+            penalty=false_claim_penalty(n),
+            score_changes=changes,
+            scores=scores,
+        )
+    )
+    out.append(
+        RoundCompleted(
+            seq=seq + 1,
+            completed_round=round_index,
+            attempt=attempt,
+            outcome=ROUND_OUTCOME_FALSE_CLAIM,
+            claimant=claimant,
+            rounds_completed=rounds_completed,
+        )
+    )
+    seq += 2
+
+    if rounds_completed < config.num_rounds:
+        new_state, deal_event = _start_round(
+            config, deal_round(config, rounds_completed, FIRST_ATTEMPT), scores, seq
+        )
+        out.append(deal_event)
+    else:
+        new_state = replace(
+            claim_state,
+            completed_rounds=rounds_completed,
+            attempt=FIRST_ATTEMPT,
+            initiator=rotation_initiator(n, rounds_completed),
+            phase=Phase.GAME_OVER,
+            initial_claims_resolved=0,
+            scores=scores,
+            winner=None,
+            false_claimant=None,
+            claim_decision_kind=None,
+            next_seq=seq + 1,
+        )
+        check_invariants(new_state)
+        out.append(
+            GameCompleted(
+                seq=seq,
+                completed_round=rounds_completed,
+                attempt=FIRST_ATTEMPT,
+                rounds_completed=rounds_completed,
+                final_scores=scores,
+            )
+        )
+    return Accepted(new_state, tuple(out))
 
 
 def _apply_initial_decline(state: GameState, seat: int) -> Accepted:
