@@ -1,4 +1,4 @@
-"""Authoritative game state (§3A.1, §5A). Milestone 2: the initial claim phase.
+"""Authoritative game state (§3A.1, §5A). M2: initial claim phase. M3: passing.
 
 `GameState` is immutable. The engine produces a new state for every accepted
 action and leaves the old one untouched, so a rejected action cannot change
@@ -8,8 +8,13 @@ Milestone 2 stopping points
 ---------------------------
 `WIN_DECLARED` (a valid claim fixed the winner; reactions and scoring are M5)
 and `FALSE_CLAIM` (an eligible claim failed matching; the penalty and round
-completion are M4) are *holding* phases. In M2 no scores are applied and
-`completed_rounds` is not incremented in either of them.
+completion are M4) are *holding* phases. Through M3 no scores are applied and
+`completed_rounds` is not incremented in either of them. A claim made during
+ordinary passing (M3) ends in the same holding phases as an initial claim.
+
+Hand sizes (§3A.4): chit delivery is atomic, so no chit is ever "in transit"
+between states. While the initiator's chit is being passed around, the
+initiator holds three chits and the current non-initiator receiver holds five.
 """
 
 from __future__ import annotations
@@ -23,16 +28,28 @@ from .config import GameConfig
 
 class Phase(Enum):
     INITIAL_CLAIMS = "initial_claims"  # §3A.3: one claim opportunity per seat
-    PASSING = "passing"  # ordinary passing begins; the pass cycle itself is M3
+    PASSING = "passing"  # ordinary sequential passing (M3)
     WIN_DECLARED = "win_declared"  # holding phase until M5
     FALSE_CLAIM = "false_claim"  # holding phase until M4
 
 
 class DecisionKind(Enum):
-    """Kinds of decision point reachable so far (§5A). M3 adds the receive/return kinds."""
+    """Kinds of decision point (§5A, §3A.4 table)."""
 
     INITIAL_CLAIM = "initial_claim"
-    INITIATOR_FIRST_PASS = "initiator_first_pass"
+    INITIATOR_FIRST_PASS = "initiator_first_pass"  # initiator holds 4; no claim opportunity
+    NON_INITIATOR_RECEIVE = "non_initiator_receive"  # receiver holds 5, initiator 3; may claim
+    INITIATOR_RETURN = "initiator_return"  # chit returned, initiator holds 4; may claim
+
+
+# Decision kinds at which an eligible player may claim (§3A.4).
+CLAIM_KINDS = frozenset(
+    {
+        DecisionKind.INITIAL_CLAIM,
+        DecisionKind.NON_INITIATOR_RECEIVE,
+        DecisionKind.INITIATOR_RETURN,
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -50,6 +67,9 @@ class GameState:
     scores: per-seat totals. Not modified in M2.
     winner / false_claimant: set only in WIN_DECLARED / FALSE_CLAIM.
     next_seq: sequence number of the next event (single authoritative order).
+    claim_decision_kind: the decision kind at which the claim was made; set
+        only in WIN_DECLARED / FALSE_CLAIM. It tells the invariant checker
+        which hand shape and matching rule apply to the claimant (M3).
     """
 
     config: GameConfig
@@ -65,3 +85,4 @@ class GameState:
     winner: int | None
     false_claimant: int | None
     next_seq: int
+    claim_decision_kind: DecisionKind | None = None

@@ -1,4 +1,4 @@
-"""Sequenced engine events with separate public and debug views (§5A, §4, §6).
+"""Sequenced engine events with separate public and debug views (§5A, §4, §6, §3A.8).
 
 Every event carries a `seq` from the single authoritative sequence, plus the
 completed-round index and attempt number (§6).
@@ -105,3 +105,40 @@ class InitialClaimsResolved(Event):
 
     def public_view(self) -> dict[str, Any]:
         return {**self._base(), "initiator": self.initiator}
+
+
+@dataclass(frozen=True)
+class ChitPassed(Event):
+    """One atomic chit delivery (§3A.4). Public: sender and receiver only; the
+    chit's identity is known only to those two players (§3A.8), so it appears
+    only in the private debug view."""
+
+    from_seat: int
+    to_seat: int
+    chit: Chit
+
+    type: ClassVar[str] = "chit_passed"
+
+    def public_view(self) -> dict[str, Any]:
+        return {**self._base(), "from_seat": self.from_seat, "to_seat": self.to_seat}
+
+    def debug_view(self) -> dict[str, Any]:
+        return {**self.public_view(), "chit": _chit_json(self.chit)}
+
+
+@dataclass(frozen=True)
+class ClaimMade(Event):
+    """An eligible claim during ordinary passing. `valid` False means a false
+    claim (§3A.5). Public view states validity but not the hand (§9 question 9)."""
+
+    seat: int
+    valid: bool
+    hand: tuple[Chit, ...]
+
+    type: ClassVar[str] = "claim_made"
+
+    def public_view(self) -> dict[str, Any]:
+        return {**self._base(), "seat": self.seat, "valid": self.valid}
+
+    def debug_view(self) -> dict[str, Any]:
+        return {**self.public_view(), "hand": [_chit_json(c) for c in self.hand]}
