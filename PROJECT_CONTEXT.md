@@ -3,7 +3,7 @@
 **Research title:** *ChitAI: An AI-Powered Multiplayer Game for Decision-Making Under Incomplete Information*
 **Repository:** `vyavaharep04-cloud/ChitAI`
 **Default branch:** `main`
-**Status:** Specification and architecture finalized (2026-10-17). Milestone 1 implemented and tested locally (2026-10-17, uncommitted pending owner review); Milestones 2+ not started. **Last updated:** 2026-10-17
+**Status:** Specification and architecture finalized (2026-10-17). Milestone 1 implemented and tested locally (2026-10-17, uncommitted pending owner review) *[Update: merged into `main` via PR #3, merge commit `cbdf59e`]*; Milestone 2 implemented and tested locally on branch `feature/milestone-2-initial-claims` (2026-10-17, awaiting owner review); Milestones 3+ not started. **Last updated:** 2026-10-17
 
 > Maintenance rule: Treat this as a persistent project record. Do not overwrite existing history. Append dated milestone notes to the Change Log, including decisions, changes, tests, and next actions.
 
@@ -211,7 +211,7 @@ The precise signature can change; consistency and information restrictions matte
 
 ## 5A. Adopted architecture and module responsibilities (finalized 2026-10-17)
 
-**Status: planned design. [Update 2026-10-17: the Milestone 1 modules `engine/config.py`, `chits.py`, `rng.py`, `deal.py` now exist; all other modules remain planned and are not created.]** Modules are created only when their milestone begins; none are created in advance as empty placeholders.
+**Status: planned design. [Update 2026-10-17: the Milestone 1 modules `engine/config.py`, `chits.py`, `rng.py`, `deal.py` now exist; all other modules remain planned and are not created.] **[Update 2026-10-17: the Milestone 2 modules `engine/state.py`, `actions.py`, `events.py`, `rules.py`, `invariants.py`, `engine.py` now exist; `scoring.py` and all non-engine packages remain planned.]** Modules are created only when their milestone begins; none are created in advance as empty placeholders.
 
 ### Technology decisions
 - Python 3.12-compatible code; pytest for automated tests.
@@ -248,12 +248,12 @@ ChitAI/
 | `engine/chits.py` | M1 | Fixed chit names and physical chit instances; deck construction (`N` names × 4 copies). Matching by name only. |
 | `engine/rng.py` | M1 | Seeded, purpose-separated random streams (for example deal vs. timeout) derived deterministically from the master seed, so a timeout cannot change later deals. Justified now because seeded dealing needs it. |
 | `engine/deal.py` | M1 | Seeded dealing of four chits per player, and starting-player rotation (initiator for a given completed-round index). |
-| `engine/state.py` | later | Phase, decision point, hands, chit movement, completed-round and attempt counters, scores. |
-| `engine/actions.py` | later | Player actions (claim, decline, pass, and engine-generated timeout actions, later reactions). |
-| `engine/events.py` | later | Sequenced events with separate public and private views. |
-| `engine/rules.py` | later | Pure rule functions: claim eligibility, claim validity (four-of-four, four-of-five), legal actions. |
-| `engine/invariants.py` | later | Checks for hand sizes, `4N` total chits, four copies per name, and phase/decision-point consistency. |
-| `engine/engine.py` | later | The single authoritative engine: validates and applies actions; rejected actions leave state unchanged. |
+| `engine/state.py` | M2 | Phase, decision point, hands, chit movement, completed-round and attempt counters, scores. |
+| `engine/actions.py` | M2 | Player actions (claim, decline, pass, and engine-generated timeout actions, later reactions). |
+| `engine/events.py` | M2 | Sequenced events with separate public and private views. |
+| `engine/rules.py` | M2 | Pure rule functions: claim eligibility, claim validity (four-of-four, four-of-five), legal actions. |
+| `engine/invariants.py` | M2 | Checks for hand sizes, `4N` total chits, four copies per name, and phase/decision-point consistency. |
+| `engine/engine.py` | M2 | The single authoritative engine: validates and applies actions; rejected actions leave state unchanged. |
 | `engine/scoring.py` | later | False-claim penalties, win scores, reaction-order scoring, tie-breaking by authoritative sequence. |
 | `agents/` | later | RuleBot, SmartBot, MindBot behind one interface. |
 | `observations/` | later | Player-specific, privacy-safe views and legal-action lists. |
@@ -324,7 +324,7 @@ Avoid starting with a complex UI or adding advanced algorithms before the rules 
 
 The order follows the delivery priorities above. Only Milestone 1 is fixed; later milestones are indicative and may be re-sliced when they begin. A milestone is complete only when its tests have actually been run and the results recorded in the change log.
 
-**M1 — Scaffolding, configuration, deck, seeded deal, rotation (strictly limited)** *[Implemented and tested 2026-10-17; see Change Log. Awaiting owner review.]*:
+**M1 — Scaffolding, configuration, deck, seeded deal, rotation (strictly limited)** *[Implemented and tested 2026-10-17; see Change Log. Update: merged into `main` via PR #3.]*:
 1. `pyproject.toml` and pytest configuration.
 2. Minimal `src/chitai/engine` package.
 3. `GameConfig` and validation.
@@ -337,7 +337,7 @@ The order follows the delivery priorities above. Only Milestone 1 is fixed; late
 M1 explicitly excludes passing, claims, scoring, reactions, timeouts, anti-stall, agents, simulations, and the browser UI.
 
 **Later milestones (indicative):**
-- M2: state, actions, events, invariants, and the initial claim phase (claim, decline, deterministic order).
+- M2: state, actions, events, invariants, and the initial claim phase (claim, decline, deterministic order). *[Implemented and tested 2026-10-17 on `feature/milestone-2-initial-claims`; see Change Log. Awaiting owner review.]*
 - M3: sequential passing and ordinary claim opportunities, with hand-size and eligibility invariants.
 - M4: false claims, round completion, rotation by completed round, and multi-round games.
 - M5: reactions and scoring, including authoritative sequence tie-breaking.
@@ -380,6 +380,8 @@ All other gameplay and architecture decisions are settled and recorded in §3A a
 5. **Draw safety cap:** the behaviour is settled (stop and record, never award points). The default cap value and the recorded outcome format are chosen at the simulation milestone.
 6. **Round-end reveal:** whether a claimed hand is publicly revealed at round end, which affects what agents may legitimately observe. Decide at the observations milestone (M7).
 7. **Final ranking ties:** how equal total scores are ranked in summaries (shared rank or a tie-break rule). Decide when multi-round summaries are implemented.
+8. **M2 holding phases (added 2026-10-17):** M2 stops at `WIN_DECLARED` / `FALSE_CLAIM` without scoring or incrementing `completed_rounds`, because those belong to M5 and M4. Owner to confirm that M4/M5 should extend these phases rather than replace them.
+9. **Public claim event (added 2026-10-17):** the public view of a claim event states the claimant and whether the claim was valid, but not the claimant's hand. This is a provisional choice pending open question 6 (round-end reveal, M7); only the private debug view contains the hand.
 
 ## 10. Definition of done
 
@@ -395,8 +397,8 @@ All other gameplay and architecture decisions are settled and recorded in §3A a
 - [ ] Basic browser UI uses the same engine.
 - [ ] Mixed human/AI play tested if included in the promised scope.
 - [ ] Research conclusions supported by actual results and limitations.
-- [ ] Hand-size and claim-eligibility invariants enforced and tested at every transition.
-- [ ] Initial claim order, automatic decline on timeout, and ineligible-claim rejection tested.
+- [ ] Hand-size and claim-eligibility invariants enforced and tested at every transition. *[M2: enforced and tested for initial-phase states only; extended in M3.]*
+- [ ] Initial claim order, automatic decline on timeout, and ineligible-claim rejection tested. *[M2: initial claim order and ineligible-claim rejection tested; automatic decline on timeout is not implemented (M6).]*
 - [ ] Completed rounds and draw attempts tracked separately and tested.
 - [ ] Simulation draw safety cap implemented and tested.
 - [ ] README contains setup and run instructions. *[Setup and test instructions exist as of M1; there is nothing to run yet, so this stays unticked.]*
@@ -454,3 +456,19 @@ For each substantial change:
 - **Not implemented / limits:** no game state, actions, or events exist; the deal is not yet connected to any phase or decision point; DoD checkboxes remain unticked.
 - **Open questions §9:** none became blocking or was resolved by M1.
 - **Next:** owner reviews and commits M1 on a feature branch; then M2 (state, actions, events, invariants, initial claim phase).
+
+### 2026-10-17 — Milestone 2 implemented (local branch `feature/milestone-2-initial-claims`)
+- **Preconditions checked:** M1 was merged into `main` (PR #3, merge commit `cbdf59e`; the M1 branch tip is an ancestor of `origin/main`); the M2 branch was created from `main` at `cbdf59e`. Baseline `pytest` on `main` before any change: 141 passed. (This supersedes the M1 entry's "local, uncommitted" status; that entry is left unchanged as history.)
+- **Scope:** exactly the M2 line of §8A: state, actions, events, invariants, and the initial claim phase (claim, decline, deterministic order). No passing, five-chit claims, scoring, penalties, round completion, rotation after a round, reactions, timers or timeouts, anti-stall, observations, agents, simulation, server, or UI was written.
+- **Files added:** `src/chitai/engine/{state,actions,events,rules,invariants,engine}.py`; `tests/engine/{helpers,test_rules,test_invariants,test_initial_claims,test_events}.py`. **Files modified:** `src/chitai/engine/__init__.py` (exports), `README.md`, this document (status line, §5A table and status note, §8A tags, §9 questions 8-9, §10 annotations, this entry). No M1 module was changed other than the `__init__` exports.
+- **Behaviour implemented (all from §3A.3-§3A.5):** the initial opportunities are processed one seat at a time from the initiator clockwise (wrapping); every seat may claim or decline whether or not its hand matches; a claim is valid only when all four chits share a name, and an eligible non-matching claim is a false claim; the engine never claims for a player; a claim or decline by any seat other than the single decision point, an invalid seat, an unrecognized action, or any action outside the initial phase is rejected with no penalty, no state change and no sequence number consumed; after every seat has declined the phase becomes `PASSING` with the initiator as the decision point for the first pass (no further initiator claim); the first valid claim fixes the winner and later actions are rejected. `check_invariants` runs on every state the engine produces: seat count, four chits per hand, `4N` chits, each physical instance exactly once, four copies per name, scores shape, counter ranges, initiator for round, and phase/decision-point/outcome consistency (a recorded winner's hand must match; a false claimant's must not).
+- **Implementation decisions** (details the documents left unspecified; none changes a §3A rule):
+  1. *Holding phases:* `WIN_DECLARED` and `FALSE_CLAIM` are M2 stopping points. They record `winner` / `false_claimant`, apply no scores, and leave `completed_rounds` unchanged (§9 question 8).
+  2. *Immutable state and results:* `GameState` is a frozen dataclass; `apply_action` returns `Accepted(state, events)` or `Rejected(reason, message)` and never mutates its input. `RejectionReason` is one of `unknown_action`, `invalid_seat`, `phase_not_accepting`, `not_decision_point`. Rejections are returned, not raised; an invalid `state` argument or a malformed deal is a programming error and raises (`TypeError`, `InvariantViolation`).
+  3. *Resolution counter:* `initial_claims_resolved` counts seats whose opportunity is resolved (a claim resolves its own); the decision seat is derived as `order[resolved]` and cross-checked by an invariant.
+  4. *Events:* `DealEvent`, `InitialClaimDeclined`, `InitialClaimMade`, `InitialClaimsResolved`, each with `seq`, `completed_round`, `attempt`. `public_view()` never contains chit identities; `debug_view()` is the private record. A public claim event states validity but not the hand (§9 question 9). Per-player observation views are M7.
+  5. *Starting an attempt:* `new_game(config)` starts round 0, attempt 1; `start_from_deal(config, deal)` starts from any consistent `Deal` (also used to test later initiators and crafted hands). M2 does not carry scores or state between rounds.
+  6. *Deferred:* automatic decline on timeout (§3A.3) needs timers and the open timer duration (§9 question 3), so it is left to M6; M2 has no timeout action.
+- **Tests actually run (2026-10-17, Python 3.12.3, pytest 9.1.1, Linux, virtualenv created with `pip install -e ".[dev]"`):** full `pytest` -> **274 passed in about 0.5 s** (141 existing M1 tests plus 133 new). New tests cover all player counts 4-8, all initiators including wraparound, valid and false claims from every position in the order, three-of-a-kind and two-pair hands, matching players who decline, out-of-turn and already-declined claims, claims after resolution, after a win and after a false claim, invalid seats (negative, out of range, bool, float, string, None), unrecognized actions, immutability, contiguous event sequencing, public/debug view privacy, JSON serializability, corrupted-state detection for every invariant, and seeded random walks (200 games) checking invariants at each step. Sanity check: 12 deliberate code mutations (accepting out-of-turn claims, counter-clockwise order, order ignoring the initiator, three-of-four validity, not entering `PASSING`, a false-claim penalty, completing the round on a claim, leaking hands in two public views, not advancing the sequence, accepting bool seats, disabling the invariant checker) were each detected by at least one failing test; the originals were then restored and the suite passed again. Not run: Windows/macOS, other Python versions. No coverage measurement.
+- **Not implemented / limits:** no passing; no timers; scores are never changed; the DoD checkboxes remain unticked (two are annotated as partially covered).
+- **Next:** owner reviews and merges M2; then M3 (sequential passing and ordinary claim opportunities, hand-size and eligibility invariants for the three-chit initiator and five-chit receiver states).
