@@ -1,6 +1,7 @@
 """Sequenced engine events with separate public and debug views (§5A, §4, §6, §3A.8).
 M4 adds FalseClaimPenalized, RoundCompleted and GameCompleted; the next round's
-start is an ordinary DealEvent.
+start is an ordinary DealEvent. M5 adds PlayerReacted and ValidWinScored and a
+"valid_win" RoundCompleted outcome.
 
 Every event carries a `seq` from the single authoritative sequence, plus the
 completed-round index and attempt number (§6).
@@ -147,6 +148,7 @@ class ClaimMade(Event):
 
 
 ROUND_OUTCOME_FALSE_CLAIM = "false_claim"
+ROUND_OUTCOME_VALID_WIN = "valid_win"
 
 
 @dataclass(frozen=True)
@@ -176,10 +178,63 @@ class FalseClaimPenalized(Event):
 
 
 @dataclass(frozen=True)
+class PlayerReacted(Event):
+    """A non-winner reacted to a valid win (M5). `position` is the 1-based place
+    in the authoritative reaction order (the accepted-action order); it is
+    public, since reactions are public. No chit identity appears.
+
+    winner: the seat that won the round.
+    """
+
+    seat: int
+    position: int
+    winner: int
+
+    type: ClassVar[str] = "player_reacted"
+
+    def public_view(self) -> dict[str, Any]:
+        return {
+            **self._base(),
+            "seat": self.seat,
+            "position": self.position,
+            "winner": self.winner,
+        }
+
+
+@dataclass(frozen=True)
+class ValidWinScored(Event):
+    """The score effect of a valid win, emitted exactly once per won round (M5).
+    `completed_round` is the round being scored.
+
+    winner: the winning seat (scores N). reaction_order: the non-winners in
+    authoritative reaction order (first scores N-1, ..., last scores 1).
+    score_changes: per-seat change this round. scores: per-seat totals after.
+    """
+
+    winner: int
+    reaction_order: tuple[int, ...]
+    score_changes: tuple[int, ...]
+    scores: tuple[int, ...]
+
+    type: ClassVar[str] = "valid_win_scored"
+
+    def public_view(self) -> dict[str, Any]:
+        return {
+            **self._base(),
+            "winner": self.winner,
+            "reaction_order": list(self.reaction_order),
+            "score_changes": list(self.score_changes),
+            "scores": list(self.scores),
+        }
+
+
+@dataclass(frozen=True)
 class RoundCompleted(Event):
     """A round ended and counted toward the configured total (§3A.6).
     `completed_round` is the index of the round that just ended;
-    `rounds_completed` is the running total after it."""
+    `rounds_completed` is the running total after it. `claimant` is the seat
+    whose claim ended the round: the false claimant for outcome "false_claim"
+    and the winner for outcome "valid_win"."""
 
     outcome: str
     claimant: int

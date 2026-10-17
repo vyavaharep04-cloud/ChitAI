@@ -1,9 +1,10 @@
 """Pure game engine. M1: configuration, deck, seeded deal, rotation.
 M2: state, actions, events, invariants, and the initial claim phase.
 M3: sequential passing and ordinary claim opportunities.
-M4: false-claim penalties, round completion, and multi-round progression."""
+M4: false-claim penalties, round completion, and multi-round progression.
+M5: valid-win reactions, scoring, and round completion."""
 
-from .actions import Action, ClaimAction, DeclineAction, PassAction
+from .actions import Action, ClaimAction, DeclineAction, PassAction, ReactAction
 from .chits import CHIT_NAMES, CHITS_PER_HAND, COPIES_PER_NAME, Chit, build_deck, chit_names_for
 from .config import (
     MAX_PASS_TIMEOUT_SECONDS,
@@ -18,6 +19,7 @@ from .events import (
     ChitPassed,
     ClaimMade,
     ROUND_OUTCOME_FALSE_CLAIM,
+    ROUND_OUTCOME_VALID_WIN,
     DealEvent,
     Event,
     FalseClaimPenalized,
@@ -25,7 +27,9 @@ from .events import (
     InitialClaimDeclined,
     InitialClaimMade,
     InitialClaimsResolved,
+    PlayerReacted,
     RoundCompleted,
+    ValidWinScored,
 )
 from .invariants import InvariantViolation, check_invariants
 from .rng import derive_seed, make_rng
@@ -38,8 +42,16 @@ from .rules import (
     is_valid_seat,
     legal_actions,
     next_seat,
+    pending_reactors,
 )
-from .scoring import false_claim_penalty, false_claim_score_changes
+from .scoring import (
+    false_claim_penalty,
+    false_claim_score_changes,
+    reaction_score,
+    valid_win_round_total,
+    valid_win_score_changes,
+    winner_score,
+)
 from .state import CLAIM_KINDS, DecisionKind, GameState, Phase
 
 __all__ = [
@@ -47,6 +59,7 @@ __all__ = [
     "ClaimAction",
     "DeclineAction",
     "PassAction",
+    "ReactAction",
     "CHIT_NAMES",
     "CHITS_PER_HAND",
     "COPIES_PER_NAME",
@@ -74,6 +87,9 @@ __all__ = [
     "ChitPassed",
     "ClaimMade",
     "ROUND_OUTCOME_FALSE_CLAIM",
+    "ROUND_OUTCOME_VALID_WIN",
+    "PlayerReacted",
+    "ValidWinScored",
     "DealEvent",
     "Event",
     "FalseClaimPenalized",
@@ -81,6 +97,11 @@ __all__ = [
     "RoundCompleted",
     "false_claim_penalty",
     "false_claim_score_changes",
+    "reaction_score",
+    "valid_win_round_total",
+    "valid_win_score_changes",
+    "winner_score",
+    "pending_reactors",
     "InitialClaimDeclined",
     "InitialClaimMade",
     "InitialClaimsResolved",

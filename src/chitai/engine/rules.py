@@ -1,4 +1,4 @@
-"""Pure rule functions (§3A.3-§3A.4, §5A). M2: initial phase. M3: passing and claims.
+"""Pure rule functions (§3A.3-§3A.4, §5A). M2: initial phase. M3: passing and claims. M5: reactions.
 
 No function here mutates anything or consults randomness. Matching uses chit
 names only (§3A.2).
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections import Counter
 
-from .actions import Action, ClaimAction, DeclineAction, PassAction
+from .actions import Action, ClaimAction, DeclineAction, PassAction, ReactAction
 from .chits import CHITS_PER_HAND, Chit
 from .config import GameConfig
 from .state import CLAIM_KINDS, DecisionKind, GameState, Phase
@@ -70,6 +70,20 @@ def is_valid_seat(config: GameConfig, seat: object) -> bool:
     return isinstance(seat, int) and not isinstance(seat, bool) and 0 <= seat < config.num_players
 
 
+def pending_reactors(state: GameState) -> tuple[int, ...]:
+    """Seats that may still react to a valid win, in ascending seat order (M5).
+    Empty outside WIN_DECLARED. Every non-winner who has not yet reacted is
+    eligible; the winner never reacts."""
+    if state.phase is not Phase.WIN_DECLARED or state.winner is None:
+        return ()
+    reacted = set(state.reaction_order)
+    return tuple(
+        seat
+        for seat in range(state.config.num_players)
+        if seat != state.winner and seat not in reacted
+    )
+
+
 def legal_actions(state: GameState) -> tuple[Action, ...]:
     """Actions the engine would accept right now.
 
@@ -77,9 +91,12 @@ def legal_actions(state: GameState) -> tuple[Action, ...]:
     or not its hand matches. Passing: the decision-point seat may pass any one
     chit it holds (four for the initiator, five for a receiver), and may also
     claim when it has a claim opportunity (§3A.4); there is no decline, because
-    passing forfeits the opportunity. Holding phases accept nothing yet
-    (reactions are M5).
+    passing forfeits the opportunity. After a valid win (WIN_DECLARED) there is
+    no single decision point: every non-winner who has not yet reacted may react
+    (M5). The transient FALSE_CLAIM phase and GAME_OVER accept nothing.
     """
+    if state.phase is Phase.WIN_DECLARED:
+        return tuple(ReactAction(seat) for seat in pending_reactors(state))
     seat = state.decision_seat
     if seat is None:
         return ()

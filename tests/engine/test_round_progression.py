@@ -10,6 +10,7 @@ import pytest
 from chitai.engine import (
     Accepted,
     ClaimAction,
+    ReactAction,
     DeclineAction,
     GameConfig,
     InvariantViolation,
@@ -28,14 +29,16 @@ PLAYER_COUNTS = [4, 5, 6, 7, 8]
 
 def random_game(config, rng, claim_probability, max_steps=3000):
     """Play random legal actions until the game ends, a valid claim is made
-    (WIN_DECLARED holds until M5), or the step bound is reached (nothing in M4
-    stops an endless pass cycle). Yields every accepted (before, result)."""
+    (the walk stops at WIN_DECLARED, so these M4 games contain only false-claim
+    rounds; valid-win games are generated in test_valid_win.py), or the step
+    bound is reached (nothing stops an endless pass cycle). Yields every
+    accepted (before, result)."""
     result = new_game(config)
     state = result.state
     yield None, result
     for _ in range(max_steps):
         actions = legal_actions(state)
-        if not actions:
+        if not actions or state.phase is Phase.WIN_DECLARED:
             return
         claim = ClaimAction(state.decision_seat)
         decline = DeclineAction(state.decision_seat)
@@ -111,7 +114,7 @@ def _seed_with_matching_round_one_initiator(n):
 
 
 @pytest.mark.parametrize("n", PLAYER_COUNTS)
-def test_a_valid_claim_in_a_later_round_holds_without_win_scoring_or_completion(n):
+def test_a_valid_claim_in_a_later_round_enters_reactions_without_scoring_yet(n):
     from chitai.engine import start_from_deal
 
     from .helpers import crafted_deal
@@ -126,12 +129,12 @@ def test_a_valid_claim_in_a_later_round_holds_without_win_scoring_or_completion(
     result = apply_action(state, ClaimAction(1))
     won = result.state
     assert won.phase is Phase.WIN_DECLARED and won.winner == 1
-    assert won.scores == state.scores  # no win or reaction score in M4 (M5)
-    assert won.completed_rounds == 1  # a valid win does not complete the round in M4
+    assert won.scores == state.scores  # scored only when the last reaction completes the round (M5)
+    assert won.completed_rounds == 1  # likewise the round is not complete yet
     assert won.attempt == 1 and won.next_seq == state.next_seq + 1
     assert len(result.events) == 1
     check_invariants(won)
-    assert legal_actions(won) == ()
+    assert legal_actions(won) == tuple(ReactAction(s) for s in range(n) if s != 1)
     for seat in range(n):
         for action in (ClaimAction(seat), DeclineAction(seat)):
             assert apply_action(won, action).reason.value == "phase_not_accepting"

@@ -1,5 +1,5 @@
 """Engine invariants (§5A, constraint 8). M2: initial phase. M3: passing. M4: scores,
-round completion and the terminal state.
+round completion and the terminal state. M5: reaction phase and win scores.
 
 `check_invariants` is called by the engine on every state it produces. A
 violation means an engine bug (or a malformed deal handed to the engine) and
@@ -20,7 +20,7 @@ from collections import Counter
 from .chits import CHITS_PER_HAND, COPIES_PER_NAME, Chit, build_deck, chit_names_for
 from .deal import FIRST_ATTEMPT, initiator_for_round, rotation_initiator
 from .rules import initial_claim_order, is_valid_claim
-from .scoring import false_claim_penalty
+from .scoring import false_claim_penalty, valid_win_round_total, winner_score
 from .state import CLAIM_KINDS, DecisionKind, GameState, Phase
 
 
@@ -169,10 +169,35 @@ def check_invariants(state: GameState) -> None:
             is_valid_claim(kind, state.hands[claimant]) is won,
             "winner's hand does not match" if won else "false claimant's hand actually matches",
         )
+        _check_reactions(state, won)
 
 
 def _no_outcome(state: GameState) -> bool:
-    return state.winner is None and state.false_claimant is None and state.claim_decision_kind is None
+    return (
+        state.winner is None
+        and state.false_claimant is None
+        and state.claim_decision_kind is None
+        and state.reaction_order == ()
+    )
+
+
+def _check_reactions(state: GameState, won: bool) -> None:
+    """M5: reactions exist only after a valid win. They are distinct non-winner
+    seats; the round completes when all N-1 have reacted, so a returned state
+    has fewer than N-1 (the full-length state is transient and only validated
+    inside the engine)."""
+    n = state.config.num_players
+    order = state.reaction_order
+    _require(isinstance(order, tuple) and all(map(_is_int, order)), f"bad reaction_order {order!r}")
+    if not won:
+        _require(order == (), "a false claim has no reactions")
+        return
+    _require(len(order) <= n - 1, f"{len(order)} reactions exceed the {n - 1} non-winners")
+    _require(len(set(order)) == len(order), f"a seat reacted twice: {order!r}")
+    _require(
+        all(0 <= seat < n and seat != state.winner for seat in order),
+        f"reaction_order {order!r} contains the winner or an invalid seat",
+    )
 
 
 def _check_hand_sizes(state: GameState, kind: DecisionKind, seat: int) -> None:
@@ -188,19 +213,35 @@ def _check_hand_sizes(state: GameState, kind: DecisionKind, seat: int) -> None:
 
 
 def _check_scores(state: GameState) -> None:
-    """Score values reachable in M4. Only false claims change scores, and each
-    one deducts exactly N-1 from one seat, so every score is zero or a negative
-    multiple of N-1, and the total deducted cannot exceed one penalty per
-    completed round. (A game started from a crafted later round carries fewer
-    penalties than completed rounds, hence "at most".) M5 adds positive scores
-    and must revise this check."""
-    penalty = false_claim_penalty(state.config.num_players)
+    """Score values reachable through M5. Scores change only when a round
+    completes. A false-claim round adds -(N-1) to one seat; a valid-win round adds
+    N to the winner and N-1, ..., 1 to the others (N(N+1)/2 in total). So, with
+    R completed rounds, each seat lies in [-(N-1)R, N*R], and the grand total
+    must equal W*N(N+1)/2 - F*(N-1) for some W valid wins and F false claims
+    with W + F <= R. ("At most": a game started from a crafted later round has
+    completed fewer rounds than its index.) Scores are unchanged while a win's
+    reactions are pending, so the same check applies in every phase."""
+    n = state.config.num_players
+    penalty = false_claim_penalty(n)
+    rounds = state.completed_rounds
     for seat, score in enumerate(state.scores):
-        _require(score <= 0 and score % penalty == 0, f"seat {seat} score {score} is not a multiple of -{penalty}")
-    penalties = -sum(state.scores) // penalty
+        _require(
+            -penalty * rounds <= score <= winner_score(n) * rounds,
+            f"seat {seat} score {score} is outside [{-penalty * rounds}, {winner_score(n) * rounds}] "
+            f"after {rounds} completed rounds",
+        )
+    win_total = valid_win_round_total(n)
+    total = sum(state.scores)
+    reachable = False
+    for wins in range(rounds + 1):
+        deficit = wins * win_total - total  # = F * (N-1) for the implied false-claim count F
+        if deficit >= 0 and deficit % penalty == 0 and deficit // penalty <= rounds - wins:
+            reachable = True
+            break
     _require(
-        penalties <= state.completed_rounds,
-        f"{penalties} false-claim penalties exceed {state.completed_rounds} completed rounds",
+        reachable,
+        f"total score {total} is not reachable with {rounds} completed rounds "
+        f"(valid win = +{win_total}, false claim = -{penalty})",
     )
 
 
