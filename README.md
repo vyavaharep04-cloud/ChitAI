@@ -15,6 +15,8 @@ This is a hypothesis, not a result. No experiments have been run, and no claim a
 
 The gameplay rules and architecture have been finalized and documented. **Milestones 1 to 4 are implemented and merged into `main`; Milestone 5 is implemented on a feature branch awaiting review.** *(Update: Milestones 1 to 5 are merged into `main`; Milestone 6, timeouts and anti-stall draws, is implemented on a feature branch awaiting review.)* M1: project scaffolding, `GameConfig` validation, fixed-name deck construction, seeded dealing, and starting-player rotation. M2: game state, actions, events, invariants, and the **initial claim phase** (claim or decline, in deterministic order from the initiator). M3: **sequential passing** and ordinary claim opportunities (a five-chit receiver, and the initiator when the chit returns). M4: **false-claim penalties, round completion, and multi-round progression** (rotating initiator, fresh deals, a terminal state). M5: **valid-win resolution, player reactions, and scoring**. Everything else is not implemented yet: no timeouts, forced passes, anti-stall draws, agents, simulations, server, or browser UI. There is nothing playable yet.
 
+*(Update: Milestone 7, player observations, per-seat legal actions and per-seat event views, is implemented and awaiting review.)*
+
 ## Documentation
 
 [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) is the master project record. It contains the authoritative gameplay rules (Section 3A), the adopted architecture (Section 5A), the milestone roadmap (Section 8A), open questions, and the change log.
@@ -189,5 +191,27 @@ print(drawn.state.completed_rounds, drawn.state.attempt, drawn.state.initiator, 
 ```
 
 **Limits of M6.** The simulation **draw safety cap** is not in the engine: §3A.6 and §5A assign it to the simulation runner (Milestone 8), which can stop a run when `state.attempt` exceeds its cap. Because timeouts never claim, a game driven only by timeouts need not end, so hosts and simulators must still bound their own loops. No wall-clock timestamps, latency model, observations, agents, simulation runner or UI exist.
+
+### What exists in Milestone 7
+
+The new `chitai.observations` package is the privacy boundary for agents and clients (PROJECT_CONTEXT.md §3A.8, §4, §9 questions 29-32). It reads engine state and never changes the engine.
+
+- `observe(state, seat)` returns an `Observation`: public fields (players, rounds, round and attempt, initiator, phase, decision point, scores, hand sizes, winner, reaction order, pending reactors, `my_turn`, the chit names in play) and private fields (`my_seat`, `my_hand` as sorted chit **names**, and the observer's **own** anti-stall streak). `to_dict()` is JSON. It never contains the state, the config or seed, other seats' hands or streaks, physical copy ids, or timeout data.
+- `legal_actions_for(state, seat)` lists only that seat's actions, built from the engine's own `legal_actions`: claim, decline, react, or `NamePassAction(seat, chit_name)`, one per distinct name held. It never contains another seat's action or a timeout. `to_engine_action(state, action)` returns the engine action (a physical `PassAction` for a name) only for an action that is in that list, otherwise `None`.
+- `observe_event(event, seat)` / `observe_events(events, seat)` give the public view plus only what that seat may know: its own dealt hand, and the passed chit's name for the sender and receiver. A bystander never learns a passed chit. Claims, timeouts and draws stay public and reveal no chit. Nothing is revealed at round end. `seat=None` gives the public stream. `debug_view()` is never used.
+
+```python
+from chitai.engine import GameConfig, apply_action, new_game
+from chitai.observations import legal_actions_for, observe, to_engine_action
+
+state = new_game(GameConfig(num_players=4, num_rounds=4, seed=42)).state
+obs = observe(state, 0)
+print(obs.my_hand, obs.my_turn)                 # e.g. ('Cloud', 'Moon', 'Star', 'Sun') True
+choice = legal_actions_for(state, 0)[1]         # DeclineAction(seat=0)
+state = apply_action(state, to_engine_action(state, choice)).state
+print(observe(state, 0).my_turn, observe(state, 1).my_turn)   # False True
+```
+
+**Limits of M7.** There is no runner-level action validation or generic agent-facing error handling yet (Milestone 8): a runner must build actions with the agent's own seat, accept only actions in `legal_actions_for(state, own_seat)`, translate them with `to_engine_action`, and must not forward the engine's `Rejected` messages to agents. There are no agents, simulation runner, logging, server or UI.
 
 This is a library only; there is no game to run or play yet.
