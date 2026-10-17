@@ -12,6 +12,7 @@ from chitai.engine import (
     Accepted,
     ChitPassed,
     ClaimAction,
+    ReactAction,
     ClaimMade,
     DealEvent,
     DeclineAction,
@@ -510,19 +511,20 @@ def test_game_completed_public_view():
     }
 
 
-# --- valid claims are unchanged in M4 ------------------------------------------------------
+# --- a valid claim now enters the M5 reaction phase ------------------------------------------------------
 
 @pytest.mark.parametrize("n", PLAYER_COUNTS)
-def test_valid_claims_are_unchanged_in_m4(n):
+def test_valid_claim_enters_the_reaction_phase_without_scoring_yet(n):
     config = make_config(n, rounds=2 * n)
     state = start(config, matching=set(range(n)))
     result = apply_action(state, ClaimAction(state.decision_seat))
     won = result.state
     assert won.phase is Phase.WIN_DECLARED and won.winner == state.decision_seat
-    assert won.scores == (0,) * n  # win scoring is M5
-    assert won.completed_rounds == state.completed_rounds  # round completion on a win is M5
+    assert won.scores == (0,) * n  # win scoring happens only when the last reaction completes the round (M5)
+    assert won.completed_rounds == state.completed_rounds  # and so does round completion
     assert [type(e) for e in result.events] == [InitialClaimMade]
-    assert legal_actions(won) == ()
+    # M5: every non-winner may now react; the winner may not
+    assert legal_actions(won) == tuple(ReactAction(s) for s in range(n) if s != won.winner)
     for seat in range(n):
         reject = apply_action(won, ClaimAction(seat))
         assert isinstance(reject, Rejected) and reject.reason is RejectionReason.PHASE_NOT_ACCEPTING

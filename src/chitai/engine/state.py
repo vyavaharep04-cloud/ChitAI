@@ -1,5 +1,6 @@
 """Authoritative game state (§3A.1, §5A). M2: initial claim phase. M3: passing.
 M4: false-claim round completion, multi-round progression, terminal state.
+M5: valid-win reactions and scoring.
 
 `GameState` is immutable. The engine produces a new state for every accepted
 action and leaves the old one untouched, so a rejected action cannot change
@@ -30,6 +31,18 @@ as it ended), so chit conservation still holds. Its `initiator` is the rotation
 value `completed_rounds % num_players`, which is seat 0 because the round count
 is a multiple of N.
 
+Milestone 5 changes
+-------------------
+`WIN_DECLARED` is now the *reaction* phase rather than a holding phase: the
+winner is fixed, there is no single decision point (every non-winner who has not
+yet reacted may react), and `reaction_order` lists the seats that have reacted,
+in the engine's accepted-action order. Scores and `completed_rounds` are
+unchanged while reactions are pending. The reaction that makes `reaction_order`
+complete (N-1 seats) completes the round inside the same `apply_action` call,
+exactly like a false claim in M4: win scores are applied once, `completed_rounds`
+rises by one, and the engine deals the next round or returns `GAME_OVER`. A
+`WIN_DECLARED` state with all N-1 reactions is transient and never returned.
+
 Hand sizes (§3A.4): chit delivery is atomic, so no chit is ever "in transit"
 between states. While the initiator's chit is being passed around, the
 initiator holds three chits and the current non-initiator receiver holds five.
@@ -47,7 +60,7 @@ from .config import GameConfig
 class Phase(Enum):
     INITIAL_CLAIMS = "initial_claims"  # §3A.3: one claim opportunity per seat
     PASSING = "passing"  # ordinary sequential passing (M3)
-    WIN_DECLARED = "win_declared"  # holding phase until M5
+    WIN_DECLARED = "win_declared"  # M5: winner fixed; non-winners react (reaction phase)
     FALSE_CLAIM = "false_claim"  # transient since M4: validated internally, never returned by the engine
     GAME_OVER = "game_over"  # M4: terminal; every configured round is complete
 
@@ -83,12 +96,16 @@ class GameState:
         engine is not waiting for any player.
     initial_claims_resolved: how many seats' initial opportunities are
         resolved (a claim counts as resolving its own opportunity).
-    scores: per-seat totals. Changed only by false-claim penalties (M4).
+    scores: per-seat totals. Changed only when a round completes: by a
+        false-claim penalty (M4) or by valid-win scoring (M5).
     winner / false_claimant: set only in WIN_DECLARED / FALSE_CLAIM.
     next_seq: sequence number of the next event (single authoritative order).
     claim_decision_kind: the decision kind at which the claim was made; set
         only in WIN_DECLARED / FALSE_CLAIM. It tells the invariant checker
         which hand shape and matching rule apply to the claimant (M3).
+    reaction_order: seats that have reacted to the win, in accepted-action
+        order (M5). Non-empty only in WIN_DECLARED; never contains the winner
+        or a repeated seat.
     """
 
     config: GameConfig
@@ -105,3 +122,4 @@ class GameState:
     false_claimant: int | None
     next_seq: int
     claim_decision_kind: DecisionKind | None = None
+    reaction_order: tuple[int, ...] = ()

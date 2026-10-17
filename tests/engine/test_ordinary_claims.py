@@ -6,6 +6,7 @@ import pytest
 
 from chitai.engine import (
     ClaimAction,
+    ReactAction,
     ClaimMade,
     DecisionKind,
     PassAction,
@@ -192,7 +193,8 @@ def test_no_actions_are_accepted_after_a_passing_phase_claim(valid):
     over = claim(state).state
     if valid:
         assert over.phase is Phase.WIN_DECLARED
-        assert legal_actions(over) == ()
+        # M5: only reactions (from the three non-winners) are legal after a win
+        assert legal_actions(over) == tuple(ReactAction(s) for s in range(4) if s != over.winner)
     else:
         # M4: a false claim completes the round, so play simply continues; the
         # end-of-game case is covered in test_false_claims.py.
