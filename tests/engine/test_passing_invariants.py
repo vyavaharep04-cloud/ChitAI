@@ -219,8 +219,13 @@ def test_random_play_keeps_the_hand_size_table_and_judges_claims_correctly(n):
                 assert isinstance(result, Accepted)
                 expected = oracle_claim_is_valid(hand)
                 claims_seen[expected] += 1
-                assert result.state.phase is (Phase.WIN_DECLARED if expected else Phase.FALSE_CLAIM)
-                assert result.state.scores == (0,) * n and result.state.completed_rounds == 0
+                if expected:
+                    assert result.state.phase is Phase.WIN_DECLARED
+                    assert result.state.scores == (0,) * n and result.state.completed_rounds == 0
+                else:  # M4: a false claim completes the round and deals the next
+                    assert result.state.phase is Phase.INITIAL_CLAIMS
+                    assert result.state.completed_rounds == 1
+                    assert sorted(result.state.scores)[0] == -(n - 1) and sum(result.state.scores) == -(n - 1)
                 state = result.state
                 break
             passes = [a for a in actions if isinstance(a, PassAction)]

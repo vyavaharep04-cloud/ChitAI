@@ -1,4 +1,4 @@
-"""Shared test helpers for engine tests (M2, M3)."""
+"""Shared test helpers for engine tests (M2, M3, M4)."""
 
 from __future__ import annotations
 
@@ -130,7 +130,64 @@ def all_names_json_free(view: dict) -> bool:
     return not any(name in text for name in CHIT_NAMES)
 
 
+# --- M4: forcing false claims -----------------------------------------------------------
+
+CLAIM_POSITIONS = ("initial", "receive", "return")
+
+
+def hand_matches(hand) -> bool:
+    return len({chit.name for chit in hand}) == 1
+
+
+def false_claim_ready(config: GameConfig, position: str, completed_round: int = 0, attempt: int = 1):
+    """A state in which `state.decision_seat` is about to make an eligible claim
+    that is guaranteed false. `position` is "initial" (initial claim phase),
+    "receive" (a non-initiator holding five) or "return" (the initiator when
+    the chit comes back). The deal has no matching seat, so no hand can match."""
+    deal = crafted_deal(config, matching=set(), completed_round=completed_round, attempt=attempt)
+    state = start_deal(config, deal)
+    if position == "initial":
+        return state
+    state = decline_to_passing(state)
+    if position == "receive":
+        state, _ = do_pass(state)
+        return state
+    assert position == "return"
+    for _ in range(config.num_players):
+        state, _ = do_pass(state)
+    assert state.decision_seat == state.initiator and len(state.hands[state.initiator]) == 4
+    return state
+
+
+def play_false_claim_rounds(config: GameConfig):
+    """Play a whole game in which every round ends in a false claim, using the
+    real seeded deals: at each initial opportunity a seat claims if its hand does
+    not match and declines if it does. Returns (final_state, events, claimants).
+    Fails if a round reaches ordinary passing (every seat held a matching hand)."""
+    from chitai.engine import Phase, new_game
+
+    result = new_game(config)
+    state, events, claimants = result.state, list(result.events), []
+    while state.phase is not Phase.GAME_OVER:
+        assert state.phase is Phase.INITIAL_CLAIMS, state.phase
+        seat = state.decision_seat
+        if hand_matches(state.hands[seat]):
+            action = DeclineAction(seat)
+        else:
+            action = ClaimAction(seat)
+            claimants.append(seat)
+        step = apply_action(state, action)
+        assert isinstance(step, Accepted), step
+        state = step.state
+        events.extend(step.events)
+    return state, events, claimants
+
+
 __all__ = [
+    "CLAIM_POSITIONS",
+    "false_claim_ready",
+    "play_false_claim_rounds",
+    "hand_matches",
     "ClaimAction",
     "DeclineAction",
     "make_config",

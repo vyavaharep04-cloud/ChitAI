@@ -239,9 +239,11 @@ def test_pass_is_rejected_during_the_initial_claim_phase():
 
 def test_pass_is_rejected_after_a_claim_has_ended_the_attempt():
     state = start(make_config(4))
-    over = apply_action(state, ClaimAction(0)).state  # false claim -> holding phase
-    result = apply_action(over, PassAction(0, over.hands[0][0]))
-    assert isinstance(result, Rejected) and result.reason is RejectionReason.PHASE_NOT_ACCEPTING
+    over = apply_action(state, ClaimAction(0)).state
+    # M4: a false claim starts the next round (initial phase), where passing is
+    # not yet available.
+    result = apply_action(over, PassAction(over.decision_seat, over.hands[over.decision_seat][0]))
+    assert isinstance(result, Rejected) and result.reason is RejectionReason.ACTION_NOT_AVAILABLE
 
 
 def test_initiator_cannot_claim_at_first_pass_and_no_penalty_is_applied():

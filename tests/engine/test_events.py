@@ -63,7 +63,8 @@ def test_claim_event_public_view_states_validity_without_revealing_hand():
 
 def test_false_claim_event_public_view_says_invalid():
     events = _full_game_events(make_config(4), matching=set(), claim_seat=0)
-    assert events[-1].public_view()["valid"] is False
+    claim = next(e for e in events if e.type == "initial_claim_made")
+    assert claim.public_view()["valid"] is False
 
 
 @pytest.mark.parametrize("view", ["public_view", "debug_view"])

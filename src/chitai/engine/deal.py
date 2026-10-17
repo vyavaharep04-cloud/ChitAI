@@ -21,6 +21,14 @@ class Deal:
     hands: tuple[tuple[Chit, ...], ...]
 
 
+def rotation_initiator(num_players: int, completed_rounds: int) -> int:
+    """The seat the rotation points at after `completed_rounds` completed
+    rounds. Unlike `initiator_for_round` this is not limited to rounds that can
+    still be played, so it also describes a finished game (M4), where
+    `completed_rounds == num_rounds`."""
+    return completed_rounds % num_players
+
+
 def initiator_for_round(config: GameConfig, completed_round: int) -> int:
     """Initiator seat for a completed-round index (0-based).
 
@@ -30,7 +38,7 @@ def initiator_for_round(config: GameConfig, completed_round: int) -> int:
     consume a completed round) necessarily keeps the same initiator.
     """
     _check_round(config, completed_round)
-    return completed_round % config.num_players
+    return rotation_initiator(config.num_players, completed_round)
 
 
 def deal_round(config: GameConfig, completed_round: int, attempt: int = FIRST_ATTEMPT) -> Deal:

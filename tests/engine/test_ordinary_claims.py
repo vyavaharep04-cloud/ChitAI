@@ -119,19 +119,21 @@ def test_receiver_false_claim_with_three_of_a_kind():
     assert sorted(c.name for c in state.hands[1]) == [M, M, M, T, T]
     result = claim(state)
     lost = result.state
-    assert lost.phase is Phase.FALSE_CLAIM and lost.false_claimant == 1 and lost.winner is None
-    assert lost.claim_decision_kind is DecisionKind.NON_INITIATOR_RECEIVE
-    assert [(type(e), e.valid) for e in result.events] == [(ClaimMade, False)]
+    # M4: the false claim is penalized and the round completes (details in test_false_claims.py).
+    assert result.events[0].seat == 1
+    assert [(type(e), e.valid) for e in result.events[:1]] == [(ClaimMade, False)]
+    assert lost.phase is Phase.INITIAL_CLAIMS and lost.scores == (0, -3, 0, 0)
+    assert lost.completed_rounds == 1 and lost.false_claimant is None and lost.winner is None
     check_invariants(lost)
 
 
-def test_false_claim_applies_no_score_and_does_not_complete_the_round():
+def test_false_claim_applies_the_penalty_and_completes_the_round():
+    # M3 held this state back; M4 applies the -(N-1) penalty and completes the round.
     state = four_player_state([S, S, M, M], [T, T, C, C], [S, S, M, M], [T, T, C, C])
     state, _ = do_pass(state)
     lost = claim(state).state
-    assert lost.phase is Phase.FALSE_CLAIM
-    assert lost.scores == (0,) * 4  # penalty belongs to M4
-    assert lost.completed_rounds == 0 and lost.attempt == 1
+    assert lost.scores == (0, -3, 0, 0)
+    assert lost.completed_rounds == 1 and lost.attempt == 1
 
 
 def test_receiver_with_a_matching_hand_is_never_claimed_for():
@@ -169,10 +171,11 @@ def test_initiator_false_claim_on_return_with_three_of_a_kind():
         state, _ = do_pass(state)
     assert state.decision_kind is DecisionKind.INITIATOR_RETURN
     assert len({c.name for c in state.hands[0]}) > 1
-    lost = claim(state).state
-    assert lost.phase is Phase.FALSE_CLAIM and lost.false_claimant == 0
-    assert lost.claim_decision_kind is DecisionKind.INITIATOR_RETURN
-    assert lost.scores == (0,) * 4
+    result = claim(state)
+    lost = result.state
+    assert result.events[0].seat == 0 and result.events[0].valid is False
+    assert lost.scores == (-3, 0, 0, 0) and lost.completed_rounds == 1
+    assert lost.phase is Phase.INITIAL_CLAIMS and lost.initiator == 1
     check_invariants(lost)
 
 
@@ -187,8 +190,14 @@ def test_no_actions_are_accepted_after_a_passing_phase_claim(valid):
         state = four_player_state([S, S, M, M], [T, T, C, C], [S, S, M, M], [T, T, C, C])
         state, _ = do_pass(state)
     over = claim(state).state
-    assert over.phase in (Phase.WIN_DECLARED, Phase.FALSE_CLAIM)
-    assert legal_actions(over) == ()
+    if valid:
+        assert over.phase is Phase.WIN_DECLARED
+        assert legal_actions(over) == ()
+    else:
+        # M4: a false claim completes the round, so play simply continues; the
+        # end-of-game case is covered in test_false_claims.py.
+        assert over.phase is Phase.INITIAL_CLAIMS
+        return
     for seat in range(4):
         for action in (ClaimAction(seat), PassAction(seat, over.hands[seat][0])):
             result = apply_action(over, action)
@@ -224,5 +233,6 @@ def test_claim_event_sequence_and_state_counters():
     state, _ = do_pass(state)
     seq = state.next_seq
     result = claim(state)
-    assert result.events[0].seq == seq and result.state.next_seq == seq + 1
+    assert result.events[0].seq == seq
+    assert result.state.next_seq == seq + len(result.events)  # contiguous (M4 adds events)
     assert result.events[0].completed_round == 0 and result.events[0].attempt == 1
