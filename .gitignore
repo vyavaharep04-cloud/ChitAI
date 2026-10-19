@@ -25,3 +25,6 @@ Thumbs.db
 *.egg-info/
 build/
 dist/
+
+# Generated simulation run directories (can be large; each is reproducible from its config.json)
+runs/

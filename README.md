@@ -17,6 +17,8 @@ The gameplay rules and architecture have been finalized and documented. **Milest
 
 *(Update: Milestone 7, player observations, per-seat legal actions and per-seat event views, is implemented and awaiting review.)*
 
+*(Update: Milestone 8, RuleBot, a seeded AI-only simulation runner, event logs, CSV summaries and a batch command line, is implemented locally and awaiting review; see "What exists in Milestone 8" below. Only RuleBot exists as an agent: the behavioural-inference agent and the baseline comparison are Milestone 9, so no claim about agent performance is made.)*
+
 ## Documentation
 
 [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) is the master project record. It contains the authoritative gameplay rules (Section 3A), the adopted architecture (Section 5A), the milestone roadmap (Section 8A), open questions, and the change log.
@@ -215,3 +217,59 @@ print(observe(state, 0).my_turn, observe(state, 1).my_turn)   # False True
 **Limits of M7.** There is no runner-level action validation or generic agent-facing error handling yet (Milestone 8): a runner must build actions with the agent's own seat, accept only actions in `legal_actions_for(state, own_seat)`, translate them with `to_engine_action`, and must not forward the engine's `Rejected` messages to agents. There are no agents, simulation runner, logging, server or UI.
 
 This is a library only; there is no game to run or play yet.
+
+### What exists in Milestone 8
+
+M8 adds an agent, a seeded AI-only game runner and file output. Packages, from the bottom up (each sits above the previous one and never changes how a game is played):
+
+- `chitai.agents`: the `Agent` protocol and `RuleBot`, a fixed-heuristic baseline. RuleBot's heuristics are ordinary rules of thumb; it does **not** model opponents' behaviour.
+- `chitai.simulation`: `SimulationConfig` (JSON), deterministic seeds, result records, shared-competition ranking, and `run_game(config, game_index)`, which plays one complete game through the real engine. Agents only ever receive their own `Observation` and legal actions. The host validates every answer first: an exception, an illegal or cross-seat action, a subclass or a timeout choice is an *agent fault*, resolved by the engine's own host-issued timeout and counted separately from it (no retries). The **draw cap** and **action cap** live here (the engine has none); both are required settings with **no default value**.
+- `chitai.eventlog`: the public event log (each event's public view only), opt-in private diagnostics, three CSV tables (games, seats, rounds) and a descriptive summary.
+- `chitai.batch`: `run_batch`, a manifest, and the command line below.
+
+**Run a batch** (PowerShell or bash, from the repository root after `pip install -e ".[dev]"`; on a fresh checkout without installing, set `PYTHONPATH=src`). Create `my_batch.json`:
+
+```json
+{
+  "lineup": [
+    {"agent_type": "rulebot", "agent_config": {"non_target_order": "most_copies"}},
+    {"agent_type": "rulebot", "agent_config": {"non_target_order": "fewest_copies"}},
+    {"agent_type": "rulebot", "agent_config": {"non_target_order": "most_copies"}},
+    {"agent_type": "rulebot", "agent_config": {"non_target_order": "fewest_copies"}}
+  ],
+  "num_players": 4,
+  "num_rounds": 4,
+  "batch_seed": 20261019,
+  "game_count": 8,
+  "games_per_seed": 4,
+  "rotate_seats": true,
+  "max_draw_restarts_per_round": 50,
+  "max_actions_per_attempt": 2000,
+  "output": {"public_event_log": true, "private_diagnostics": false}
+}
+```
+
+The two caps above are **placeholder values for the example, not recommendations**; choosing them for a real experiment is an open decision (PROJECT_CONTEXT.md §9 question 33). Then:
+
+```bash
+python -m chitai.batch validate my_batch.json          # checks the file and the agents; plays nothing
+python -m chitai.batch run my_batch.json --output runs/demo
+python -m chitai.batch summarize runs/demo             # prints the summary table
+```
+
+`run` writes into a new or empty directory and refuses to overwrite anything. Files written (UTF-8, `\n` line endings):
+
+| File | Content |
+|---|---|
+| `config.json` | the effective configuration; running it again reproduces the batch byte for byte |
+| `games.csv`, `seats.csv`, `rounds.csv` | one row per game, per seat of a game, per completed round (host records; they contain the game seed) |
+| `events.jsonl` | the public event log, one line per event, plus one `game_end` line per game; no hands, chit names or seeds |
+| `private_diagnostics.jsonl` | only with `output.private_diagnostics`: private events (hands, a draw's chit) and agent-fault kinds. Never show it to an agent or client |
+| `summary.csv` | descriptive summary (see below) |
+| `manifest.json` | SHA-256 and size of every file, the configuration hash and status counts; written last, so a directory without it is an incomplete run |
+
+**Reproducibility and fair comparison.** The same configuration gives byte-identical files on a machine: nothing depends on the clock, the path, Python's hash seed or set order. `games_per_seed: k` makes each run of `k` consecutive games share one deal seed, and `rotate_seats` moves the lineup one seat per game, so different agents can face identical deals from every seat. The summary identifies an agent by its lineup entry, not by the seat it happened to occupy, and reports seat position separately.
+
+**What the summary does and does not do.** Games stopped by a cap or an unresolvable fault have no ranks, ties or winners; they are counted by status and are excluded from score, rank and win metrics. Ties are kept (`rank1_share` counts every tied first place, `outright_win_share` only untied ones) and never broken. The summary is descriptive only: it has no significance tests and does not say that any agent is better. Statistical comparison belongs to Milestone 9.
+
+**Limits of M8.** Only RuleBot exists; there is no behavioural-inference agent and no comparison result. The RuleBot `non_target_order` variant and the cap values have not been chosen. A small preliminary RuleBot measurement (20 games per cell) was run outside the package with a separate script that is not part of these patches; it is not research evidence. Reaction order in simulations is a seeded permutation of the pending players, an experimental policy and not a model of human reaction speed. No server, browser UI or human play exists yet. Tests have been run on Linux; Windows runs are the owner's to record.
