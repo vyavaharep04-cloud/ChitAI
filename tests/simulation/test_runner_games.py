@@ -301,7 +301,7 @@ def test_build_agent_makes_a_fresh_rulebot_with_its_configuration():
 @pytest.mark.parametrize(
     ("spec", "fragment"),
     [
-        (AgentSpec("smartbot"), "unknown agent_type 'smartbot' (known: rulebot)"),
+        (AgentSpec("smartbot"), "unknown agent_type 'smartbot' (known: mindbot, rulebot)"),
         (AgentSpec("rulebot", {"non_target_order": "random"}), "invalid agent_config for agent_type 'rulebot'"),
         (AgentSpec("rulebot", {"avoid_draw": "yes"}), "invalid agent_config for agent_type 'rulebot'"),
         (AgentSpec("rulebot", {"surprise": 1}), "invalid agent_config for agent_type 'rulebot'"),

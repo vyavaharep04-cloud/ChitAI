@@ -49,7 +49,7 @@ from collections.abc import Callable
 from types import MappingProxyType
 from typing import Any
 
-from ..agents import Agent, RuleBot
+from ..agents import Agent, MindBot, RuleBot
 from ..engine import (
     Accepted,
     AttemptDrawn,
@@ -93,7 +93,7 @@ from .results import (
 )
 from .seeds import game_seed, reaction_order_for_state, seat_assignment, seated_lineup
 
-AGENT_TYPES = MappingProxyType({"rulebot": RuleBot})
+AGENT_TYPES = MappingProxyType({"mindbot": MindBot, "rulebot": RuleBot})
 """The agent types a lineup may name (`AgentSpec.agent_type`)."""
 
 # The only classes an agent may return (exact classes; subclasses are faults) and the

@@ -369,7 +369,7 @@ def test_agents_import_only_the_sibling_modules_the_stdlib_and_allowlisted_names
             if node.level == 0:
                 assert node.module in {"__future__", "collections", "typing"}, (file_name, node.module)
             elif node.level == 1:
-                assert node.module in {"base", "rulebot"}, (file_name, node.module)
+                assert node.module in {"base", "belief", "mindbot", "rulebot"}, (file_name, node.module)
             else:
                 assert node.level == 2, (file_name, node.level)
                 allowed = {"engine": ALLOWED_ENGINE_NAMES, "observations": ALLOWED_OBSERVATION_NAMES}

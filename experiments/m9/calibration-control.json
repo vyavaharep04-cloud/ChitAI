@@ -1,0 +1,41 @@
+{
+  "lineup": [
+    {
+      "agent_type": "rulebot",
+      "agent_config": {
+        "non_target_order": "fewest_copies"
+      }
+    },
+    {
+      "agent_type": "rulebot",
+      "agent_config": {
+        "non_target_order": "fewest_copies"
+      }
+    },
+    {
+      "agent_type": "rulebot",
+      "agent_config": {
+        "non_target_order": "fewest_copies"
+      }
+    },
+    {
+      "agent_type": "rulebot",
+      "agent_config": {
+        "non_target_order": "fewest_copies"
+      }
+    }
+  ],
+  "num_players": 4,
+  "num_rounds": 4,
+  "batch_seed": 20261020,
+  "game_count": 200,
+  "games_per_seed": 4,
+  "rotate_seats": true,
+  "max_draw_restarts_per_round": 50,
+  "max_actions_per_attempt": 2000,
+  "output": {
+    "directory": null,
+    "public_event_log": true,
+    "private_diagnostics": false
+  }
+}

@@ -11,10 +11,13 @@ from .jsonl import game_end_line, public_event_line
 from .recorder import GameRecorder
 from .summary import SUMMARY_COLUMNS, summarize
 from .tables import (
+    AGENT_DIAGNOSTIC_COLUMNS,
+    AGENT_DIAGNOSTIC_KEYS,
     GAME_COLUMNS,
     ROUND_COLUMNS,
     SEAT_COLUMNS,
     CsvWriter,
+    agent_diagnostic_rows,
     game_row,
     read_csv,
     round_rows,
@@ -22,12 +25,15 @@ from .tables import (
 )
 
 __all__ = [
+    "AGENT_DIAGNOSTIC_COLUMNS",
+    "AGENT_DIAGNOSTIC_KEYS",
     "GAME_COLUMNS",
     "ROUND_COLUMNS",
     "SEAT_COLUMNS",
     "SUMMARY_COLUMNS",
     "CsvWriter",
     "GameRecorder",
+    "agent_diagnostic_rows",
     "fault_line",
     "game_end_line",
     "game_row",

@@ -9,6 +9,8 @@ and writes into a *new or empty* directory (it never overwrites or deletes anyth
     events.jsonl             the public event log, if `output.public_event_log` (default on)
     private_diagnostics.jsonl  private events and fault kinds, only if `output.private_diagnostics`
     summary.csv              descriptive summary computed from games.csv and seats.csv
+    agent_diagnostics.csv    only if a seated agent reports `diagnostics()` (MindBot does, RuleBot
+                             does not): one row per game per such seat, written after the game
     manifest.json            hashes of everything above; written last (absent = incomplete run)
 
 The same configuration always produces byte-identical files: nothing depends on the clock, the
@@ -26,8 +28,9 @@ from pathlib import Path
 from typing import Any
 
 from ..eventlog import (
-    GAME_COLUMNS, ROUND_COLUMNS, SEAT_COLUMNS, SUMMARY_COLUMNS, CsvWriter, GameRecorder, game_end_line,
-    game_row, read_csv, round_rows, seat_rows, summarize,
+    AGENT_DIAGNOSTIC_COLUMNS, GAME_COLUMNS, ROUND_COLUMNS, SEAT_COLUMNS, SUMMARY_COLUMNS, CsvWriter,
+    GameRecorder, agent_diagnostic_rows, game_end_line, game_row, read_csv, round_rows, seat_rows,
+    summarize,
 )  # fmt: skip
 from ..simulation import (
     TERMINATION_STATUSES,
@@ -43,6 +46,7 @@ CONFIG_NAME = "config.json"
 EVENTS_NAME = "events.jsonl"
 DIAGNOSTICS_NAME = "private_diagnostics.jsonl"
 SUMMARY_NAME = "summary.csv"
+AGENT_DIAGNOSTICS_NAME = "agent_diagnostics.csv"
 
 
 class BatchError(RuntimeError):
@@ -92,6 +96,14 @@ def run_batch(
 
     names = [CONFIG_NAME, "games.csv", "seats.csv", "rounds.csv", SUMMARY_NAME]
     statuses: Counter[str] = Counter()
+    built: list[Any] = []  # the current game's agents, in the order run_game builds them (seat order)
+
+    def collecting_factory(spec: AgentSpec) -> Any:
+        agent = agent_factory(spec)
+        built.append(agent)
+        return agent
+
+    agent_table: CsvWriter | None = None  # opened on the first diagnostic row; absent otherwise
     events = open(path / EVENTS_NAME, "w", encoding="utf-8", newline="") if options.public_event_log else None
     private = open(path / DIAGNOSTICS_NAME, "w", encoding="utf-8", newline="") if options.private_diagnostics else None
     try:
@@ -106,10 +118,16 @@ def run_batch(
                     recorder = GameRecorder(
                         index, public=options.public_event_log, private=options.private_diagnostics
                     )
-                result = run_game(config, index, agent_factory=agent_factory, recorder=recorder)
+                built.clear()
+                result = run_game(config, index, agent_factory=collecting_factory, recorder=recorder)
                 games.writerow(game_row(result))
                 seats.writerows(seat_rows(result))
                 rounds.writerows(round_rows(result))
+                diagnostic_rows = agent_diagnostic_rows(result, tuple(built))
+                if diagnostic_rows:
+                    if agent_table is None:
+                        agent_table = CsvWriter(path / AGENT_DIAGNOSTICS_NAME, AGENT_DIAGNOSTIC_COLUMNS)
+                    agent_table.writerows(diagnostic_rows)
                 if events is not None:
                     events.write("".join(line + "\n" for line in recorder.public_lines))
                     events.write(game_end_line(result) + "\n")
@@ -119,13 +137,15 @@ def run_batch(
                 if progress is not None:
                     progress(index + 1, config.game_count)
     finally:
-        for handle in (events, private):
+        for handle in (events, private, agent_table):
             if handle is not None:
                 handle.close()
     if events is not None:
         names.append(EVENTS_NAME)
     if private is not None:
         names.append(DIAGNOSTICS_NAME)
+    if agent_table is not None:
+        names.append(AGENT_DIAGNOSTICS_NAME)
 
     with CsvWriter(path / SUMMARY_NAME, SUMMARY_COLUMNS) as summary:
         summary.writerows(summarize(read_csv(path / "games.csv"), read_csv(path / "seats.csv")))

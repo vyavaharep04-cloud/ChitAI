@@ -94,6 +94,14 @@ class RuleBot:
             raise ValueError("no usable action: only a claim is offered and the hand cannot claim")
         return passes[self._choose_pass_name(observation, tuple(passes))]
 
+    def _choose_target(
+        self, observation: Observation, counts: Counter[str], held: list[str]
+    ) -> str | None:
+        """The name to collect. `held` is the held names, most copies first, ties in
+        canonical order. RuleBot takes the first. This is the single extension point
+        MindBot (M9) overrides, so that inference can only break a tie."""
+        return held[0] if held else None
+
     def _choose_pass_name(self, observation: Observation, legal_names: tuple[str, ...]) -> str:
         order = {name: index for index, name in enumerate(observation.chit_names)}
         counts = Counter(observation.my_hand)
@@ -102,7 +110,7 @@ class RuleBot:
             return order[name]
 
         held = sorted(counts, key=lambda name: (-counts[name], canonical(name)))
-        target = held[0] if held else None
+        target = self._choose_target(observation, counts, held)
 
         non_target = [name for name in legal_names if name != target]
         if self.non_target_order == "most_copies":
