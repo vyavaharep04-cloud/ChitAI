@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>ChitAI — Cosmic Edition</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div class="sky" aria-hidden="true"></div>
+
+<header class="topbar">
+  <div class="brand">
+    <svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.7 6.7 0 0 0 10.5 10.5z"/><path d="M17.5 3.5l.7 1.6 1.6.7-1.6.7-.7 1.6-.7-1.6-1.6-.7 1.6-.7z"/></svg>
+    <span class="brand-name">ChitAI</span><span class="brand-sub">Cosmic Edition</span>
+  </div>
+  <span id="conn" class="pill" role="status">connecting…</span>
+</header>
+
+<div id="offline" class="offline hidden" role="alert"></div>
+<div id="toasts" aria-live="polite" aria-atomic="false"></div>
+
+<main id="main">
+  <!-- HOME -->
+  <section id="view-home" class="view hidden" aria-labelledby="home-title">
+    <div class="hero">
+      <h1 id="home-title">ChitAI</h1>
+      <p>A multiplayer chit-passing game of incomplete information.</p>
+    </div>
+    <div class="card namecard">
+      <label for="name">Your display name</label>
+      <input id="name" maxlength="20" autocomplete="off" placeholder="e.g. Aria">
+    </div>
+    <div class="cols">
+      <div class="card create">
+        <h2><span class="dot"></span>Create a room</h2>
+        <fieldset class="modes">
+          <legend>Game mode</legend>
+          <label class="mode"><input type="radio" name="mode" value="human" checked><span>Human multiplayer</span></label>
+          <label class="mode"><input type="radio" name="mode" value="ai"><span>Human vs AI</span></label>
+        </fieldset>
+        <div class="field"><label for="num-players">Total players</label><select id="num-players"></select></div>
+        <div id="ai-config" class="aiconfig hidden">
+          <div class="field"><label for="num-humans">Human players</label><select id="num-humans"></select><small id="ai-summary"></small></div>
+          <div id="ai-seats" class="aiseats"></div>
+          <small>RuleBot is the rule-based baseline. MindBot uses behavioural inference about opponents. No claim is made that either plays better.</small>
+        </div>
+        <div class="field"><label for="num-rounds">Rounds</label><select id="num-rounds"></select><small>Always a multiple of the player count.</small></div>
+        <div class="field"><label for="timeout">Decision timer (seconds)</label><input id="timeout" type="number" min="1" max="15" step="1" value="15"><small>1 to 15 seconds per decision.</small></div>
+        <button id="btn-create" class="btn violet">Create room</button>
+      </div>
+      <div class="card join">
+        <h2><span class="dot"></span>Join a room</h2>
+        <div class="field"><label for="code">Room code</label><input id="code" class="codeinput" maxlength="4" autocomplete="off" placeholder="ABCD" spellcheck="false"><small>Ask the host for the four-letter code.</small></div>
+        <button id="btn-join" class="btn blue">Join room</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- WAITING ROOM -->
+  <section id="view-lobby" class="view hidden" aria-labelledby="lobby-h">
+    <div class="card roomhead">
+      <div>
+        <h2 id="lobby-h">Waiting room</h2>
+        <div class="codebox">
+          <span class="label">Room code</span>
+          <span id="lobby-code" class="code" aria-label="Room code"></span>
+          <button id="btn-copy" class="btn ghost small" type="button">Copy</button>
+        </div>
+      </div>
+      <ul class="chips" id="lobby-chips"></ul>
+    </div>
+    <ul id="lobby-players" class="seatgrid"></ul>
+    <div class="card startbar">
+      <p id="lobby-wait" role="status"></p>
+      <button id="btn-start" class="btn gold big hidden">Start game</button>
+    </div>
+  </section>
+
+  <!-- GAME -->
+  <section id="view-game" class="view hidden" aria-label="Game">
+    <div class="hud card">
+      <div class="hud-round">
+        <span class="label">Round</span>
+        <strong id="g-round"></strong>
+        <div class="bar" aria-hidden="true"><i id="g-round-bar"></i></div>
+        <span id="g-attempt" class="muted"></span>
+      </div>
+      <div class="hud-phase"><span class="label">Phase</span><span id="g-phase" class="phase"></span></div>
+      <div class="hud-active"><span class="label">Now</span><strong id="g-active"></strong></div>
+      <div class="hud-timer"><span class="label">Decision time</span><div id="g-timer" class="timer"></div><div class="bar timerbar" aria-hidden="true"><i id="g-timer-bar"></i></div></div>
+    </div>
+
+    <div class="board">
+      <aside class="card players" aria-labelledby="pl-h">
+        <h2 id="pl-h">Players</h2>
+        <ul id="g-players"></ul>
+      </aside>
+
+      <section class="table">
+        <div id="g-prompt" class="prompt" role="status" aria-live="polite"></div>
+        <div id="g-result" class="result hidden"></div>
+        <div class="card handcard">
+          <h2>Your hand</h2>
+          <div id="g-hand" class="hand" role="group" aria-label="Your chits"></div>
+          <div id="g-actions" class="actions"></div>
+        </div>
+      </section>
+
+      <aside class="card logcard" aria-labelledby="log-h">
+        <h2 id="log-h">Public log</h2>
+        <ol id="g-log" class="log" role="log"></ol>
+      </aside>
+    </div>
+  </section>
+
+  <!-- GAME OVER -->
+  <section id="view-over" class="view hidden" aria-labelledby="over-h">
+    <div class="card overcard">
+      <h2 id="over-h">Game over</h2>
+      <p id="o-winner" class="winner" role="status"></p>
+      <table id="o-table">
+        <caption class="sr">Final standings</caption>
+        <thead><tr><th scope="col">Rank</th><th scope="col">Player</th><th scope="col">Score</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <button id="btn-new" class="btn gold big">Back to start</button>
+    </div>
+  </section>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>

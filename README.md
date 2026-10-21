@@ -19,6 +19,8 @@ The gameplay rules and architecture have been finalized and documented. **Milest
 
 *(Update: Milestone 8, RuleBot, a seeded AI-only simulation runner, event logs, CSV summaries and a batch command line, is implemented locally and awaiting review; see "What exists in Milestone 8" below. Only RuleBot exists as an agent: the behavioural-inference agent and the baseline comparison are Milestone 9, so no claim about agent performance is made.)*
 
+*(Update: Milestone 10, a local FastAPI/WebSocket server and browser interface with optional AI opponents (RuleBot and MindBot), is implemented; see "Play in the browser (Milestone 10)" below. Milestone 9, the behavioural-inference agent MindBot and its experiment configurations, is in `main`; no claim about agent performance is made.)*
+
 ## Documentation
 
 [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) is the master project record. It contains the authoritative gameplay rules (Section 3A), the adopted architecture (Section 5A), the milestone roadmap (Section 8A), open questions, and the change log.
@@ -35,6 +37,55 @@ pytest
 ```
 
 `pip install -e ".[dev]"` installs the `chitai` package in editable mode plus pytest (the only dependency; the engine itself uses only the standard library).
+
+*(Update, Milestone 10: the `dev` extra now also installs `fastapi`, `uvicorn`, `websockets` and `httpx` for the web interface; the engine, observations and agents still use only the standard library. `pip install -e ".[web]"` installs only what is needed to run the server.)*
+
+## Play in the browser (Milestone 10)
+
+A local web interface (FastAPI, WebSockets, plain HTML/CSS/JavaScript, "Cosmic Edition" theme) lets people play the same authoritative engine used by the simulations. All rules, legality checks and scores live in the Python engine; the browser only displays what the server sends and requests actions.
+
+### Run it
+
+```powershell
+pip install -e ".[dev]"
+python -m chitai.api
+```
+
+Open <http://127.0.0.1:8000>. The server listens on `127.0.0.1` only (this machine); there is no LAN mode yet. Use `python -m chitai.api --port 8010` to change the port. Press Ctrl+C to stop.
+
+### Human multiplayer
+
+One person enters a display name, chooses 4 to 8 players, a round count (a multiple of the player count) and the decision timer (1 to 15 seconds), then clicks **Create room**. Everyone else enters a name and the four-letter room code and clicks **Join room**. When every seat is filled the host starts the game. Each player sees only their own hand and the public information the engine allows; a chit that is passed is visible only to the sender and the receiver.
+
+### Human vs AI
+
+Choose **Human vs AI** when creating a room. Pick the total number of players, how many are human (at least one, at least one AI seat), and a strategy for each AI seat. Humans take the first seats in join order and the AI seats follow, for example `human, RuleBot, MindBot, RuleBot`. The room shows which seats are AI (an "AI" badge in the waiting room and on the player cards). With one human the host can start immediately; with more, the other humans join with the code first.
+
+Available AI agents (both existing agents, unchanged):
+
+- **RuleBot**: the rule-based baseline, configured with `non_target_order = fewest_copies`.
+- **MindBot**: the behavioural-inference agent, configured with `non_target_order = fewest_copies` and `use_inference = true`.
+
+These are the same configurations as the M9 `calibration-treatment` / `calibration-control` experiment files. The server builds one separate agent instance per AI seat for each game and gives each agent only its own seat's observation and legal actions. A failing agent is handled as the simulation runner handles it: a single decision becomes a host timeout; a failing reactor is skipped; if every remaining reactor is a failed AI the room is closed with a clear message. If an AI cannot be built, room creation fails with an error and no other agent is substituted.
+
+AI pacing: AI seats wait about 0.9 seconds before a move, and about 2 seconds before reacting after a valid claim, so a person can follow the game and has a window to react first. Reaction order affects scores, so results from browser play are not comparable with the simulation experiments. A four-round game against three AI seats takes roughly a minute at this pacing. **No claim is made that MindBot plays better than RuleBot**; that question belongs to the M9 experiments, not to this interface.
+
+### Run the tests
+
+```powershell
+pytest
+```
+
+The web tests are in `tests/api/` (room logic, WebSocket protocol, privacy, AI orchestration, static assets).
+
+### Current limitations
+
+- Local only: loopback binding; no LAN mode, accounts or persistence. Rooms live in memory and disappear when the last human leaves or the server stops.
+- No reconnection: closing or refreshing a tab loses that seat. The seat stays in the game, host timers keep running for it, and the game ends when all humans have left.
+- A human who must react while two or more reactions are still pending has no timeout (a rule of the game), so an idle or disconnected human can stall a room.
+- AI rooms need at least one human; there is no spectator mode and no AI-only room (use the batch simulator for that).
+- AI strategy choices are limited to the two presets above; other RuleBot variants are not exposed.
+- The browser interface was verified with an automated simulated-DOM harness against the live server and with the pytest suite. It still needs a look in a real browser (layout, colours, keyboard use).
 
 ### What exists in Milestone 1
 
